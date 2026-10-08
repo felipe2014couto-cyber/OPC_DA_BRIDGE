@@ -103,8 +103,8 @@ class OpcDaReadFacade:
 
         # Predictable alias mappings
         self._aliases: dict[str, str] = {
-            "OPCBridge.Demo.Temperature": "Simulated.Furnace.Temperature",
-            "OPCBridge.Demo.Pressure": "Simulated.Line.Pressure",
+            "OPCBridge.Mirror.Lab.Temperature": "Simulated.Furnace.Temperature",
+            "OPCBridge.Mirror.Lab.Pressure": "Simulated.Line.Pressure",
         }
 
         # Active groups: group_handle -> OpcGroup

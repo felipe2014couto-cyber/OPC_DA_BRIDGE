@@ -331,19 +331,19 @@ def test_namespace_resolution_and_address_space_browsing() -> None:
     cache.put_sample(sample)
 
     # Alias is registered by default
-    assert facade.resolve_path("OPCBridge.Demo.Temperature") == "Simulated.Furnace.Temperature"
-    assert facade.is_valid_item_path("OPCBridge.Demo.Temperature")
+    assert facade.resolve_path("OPCBridge.Mirror.Lab.Temperature") == "Simulated.Furnace.Temperature"
+    assert facade.is_valid_item_path("OPCBridge.Mirror.Lab.Temperature")
     assert facade.is_valid_item_path("Simulated.Furnace.Temperature")
     assert not facade.is_valid_item_path("Unknown.NonExistent.Tag")
 
     # Address space browsing
     items = facade.browse_items()
-    assert "OPCBridge.Demo.Temperature" in items
+    assert "OPCBridge.Mirror.Lab.Temperature" in items
     assert "Simulated.Furnace.Temperature" in items
 
-    demo_items = facade.browse_items(prefix="OPCBridge.Demo")
-    assert "OPCBridge.Demo.Temperature" in demo_items
-    assert "Simulated.Furnace.Temperature" not in demo_items
+    mirror_items = facade.browse_items(prefix="OPCBridge.Mirror")
+    assert "OPCBridge.Mirror.Lab.Temperature" in mirror_items
+    assert "Simulated.Furnace.Temperature" not in mirror_items
 
 
 def test_group_add_items_validation() -> None:

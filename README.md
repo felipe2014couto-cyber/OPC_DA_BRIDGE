@@ -19,7 +19,7 @@ This codebase delivers:
   - Versioned TLS transport (v2 framing) with CRC32 integrity checks, server TLS validation, and token authentication (mTLS configurable).
 - **Deliverable 2 (OPC DA Mirror Read Facade & Windows Contracts)**:
   - SDK-neutral `OpcDaReadFacade` exposing a read-only contract for laboratory tests.
-  - Predictable namespace: `OPCBridge.Demo.Temperature` and `OPCBridge.Demo.Pressure` with address space browsing (`browse_items`).
+  - Predictable namespace: `OPCBridge.Mirror.Lab.Temperature` and `OPCBridge.Mirror.Lab.Pressure` with address space browsing (`browse_items`).
   - Windows FILETIME conversions (100-nanosecond intervals since Jan 1, 1601 UTC) preserving microsecond source timestamps without fabrication (Unix epoch = 0 us maps to 116444736000000000 ticks).
   - Canonical VARTYPE mappings (VT_I2, VT_I4, VT_R4, VT_R8, VT_BOOL, VT_BSTR, and VT_ARRAY|VT_UI1 for BLOB).
   - Strict write rejection for DA2 Write and DA3 WriteVQT returning official HRESULT `OPC_E_BADRIGHTS` (`0xC0040006`) without state mutation.
@@ -73,7 +73,7 @@ The test suite covers:
 - TLS transport handshakes, server certificate validation, shared-token authentication, identity/session binding, and stream delivery.
 - Official OPC DA HRESULT error definitions (`OPC_E_BADRIGHTS = 0xC0040006`, `OPC_E_UNKNOWNITEMID = 0xC0040007`, `S_OK`, `S_FALSE`).
 - Windows FILETIME conversions and VARTYPE mappings (including BLOB).
-- Predictable namespace resolution (`OPCBridge.Demo.Temperature`, `OPCBridge.Demo.Pressure`) and browsing.
+- Predictable namespace resolution (`OPCBridge.Mirror.Lab.Temperature`, `OPCBridge.Mirror.Lab.Pressure`) and browsing.
 - Read facade sync read, defensive snapshots with deeply copied payloads, and dynamic staleness detection.
 - Strict write rejection returning `OPC_E_BADRIGHTS` without state changes.
 - Group lifecycle, rate clamping, and Advise change subscriptions with deterministic rate limiting.

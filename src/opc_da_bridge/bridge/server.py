@@ -4,7 +4,7 @@ from __future__ import annotations
 import socketserver
 from typing import Any
 
-from opc_da_bridge.bridge.json_protocol import DEMO_ITEMS, decode_request, encode_message, record_from_cache
+from opc_da_bridge.bridge.json_protocol import MIRROR_ITEMS, decode_request, encode_message, record_from_cache
 from opc_da_bridge.core.cache import BoundedLatestValueCache
 
 
@@ -24,14 +24,14 @@ class CacheBridgeServer:
                 try:
                     request = decode_request(line)
                     requested = request.get("items")
-                    names = requested if isinstance(requested, list) else list(DEMO_ITEMS)
-                    paths = [DEMO_ITEMS.get(name, (name, ""))[0] for name in names if isinstance(name, str)]
+                    names = requested if isinstance(requested, list) else list(MIRROR_ITEMS)
+                    paths = [MIRROR_ITEMS.get(name, (name, ""))[0] for name in names if isinstance(name, str)]
                     cache_snapshot = owner.cache.snapshot_batch(paths)
                     entries: list[dict[str, Any]] = []
                     for name in names:
                         if not isinstance(name, str):
                             continue
-                        path = DEMO_ITEMS.get(name, (name, ""))[0]
+                        path = MIRROR_ITEMS.get(name, (name, ""))[0]
                         item = cache_snapshot.get(path)
                         if item is not None:
                             entries.append(record_from_cache(name, item))

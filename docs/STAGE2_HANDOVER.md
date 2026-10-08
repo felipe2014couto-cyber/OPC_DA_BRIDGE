@@ -26,7 +26,7 @@ A escolha técnica do backend é **Advosol DANSrv**, inicialmente Standard para 
 
 ## Contrato e o que funciona
 
-- `mirror/`: namespace navegável, aliases `OPCBridge.Demo.Temperature` e `OPCBridge.Demo.Pressure`, groups/items, leitura síncrona e callbacks Python acionados por polling.
+- `mirror/`: namespace navegável, aliases `OPCBridge.Mirror.Lab.Temperature` e `OPCBridge.Mirror.Lab.Pressure`, groups/items, leitura síncrona e callbacks Python acionados por polling.
 - `core/cache.py`: snapshot do lote sob o lock, com avaliação stale e cópia defensiva do payload. Getters existentes foram preservados.
 - VQT: preservação de valor, ValueType, quality word e timestamp da origem. Conversão FILETIME por inteiros: `timestamp_us * 10 + 116444736000000000`, com validação de limites.
 - Stale/desconexão não viram Good; o Mirror não substitui o timestamp antigo por um recente.

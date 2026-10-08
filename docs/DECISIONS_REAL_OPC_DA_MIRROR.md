@@ -4,8 +4,10 @@
 
 **Project**: OPC-DA-Bridge
 **Component**: Windows OPC DA Mirror Server
-**ProgID (Proposed Placeholder)**: `OPCBridge.Mirror.1` (Version-Independent: `OPCBridge.Mirror`)
-**CLSID (Proposed Placeholder)**: `{B7A45C89-4D3B-4921-9E9A-8F5D890E71E2}`
+**ProgID**: `OPCBridge.Mirror.1` (Version-Independent: `OPCBridge.Mirror`)
+**Display Name**: `OPCBridge Mirror`
+**Browse Namespace Root**: `OPCBridge.Mirror`
+**CLSID**: `{B7A45C89-4D3B-4921-9E9A-8F5D890E71E2}` (stable project identity; retained from the original proposal)
 **Date**: October 8, 2026 (Stage 2)
 **Status**: ARCHITECTURAL EVALUATION & CONTRACT SPECIFICATION (Contratos/mocks e decisão; servidor COM real NÃO implementado nem validado no Windows/laboratório ou com PI Interface).
 
@@ -98,7 +100,7 @@ Stage 2 of **OPC-DA-Bridge** evaluates available technical avenues to expose the
 
 > [!CAUTION]
 > NO COM REGISTRATION HAS BEEN EXECUTED DURING THIS EVALUATION.
-> ProgID `OPCBridge.Mirror.1` and CLSID `{B7A45C89-4D3B-4921-9E9A-8F5D890E71E2}` are proposed placeholders and were not registered by this task. Preexisting entries were not inspected.
+> ProgID `OPCBridge.Mirror.1` and CLSID `{B7A45C89-4D3B-4921-9E9A-8F5D890E71E2}` are selected source identities but were not registered by this task. Keep this CLSID unchanged across builds; check for preexisting collisions before any separately authorized registration.
 
 When future laboratory registration is explicitly authorized:
 1. **Pre-Registration Inventory**:

@@ -56,7 +56,7 @@ The destination cache is strictly designed to reflect **current operational stat
 
 ### 3.1 SDK-Neutral Presentation Facade (`OpcDaReadFacade`)
 - Thread-safe wrapper over `BoundedLatestValueCache`.
-- Provides predictable aliases (`OPCBridge.Demo.Temperature`, `OPCBridge.Demo.Pressure`) and address space browsing (`browse_items`).
+- Provides predictable aliases (`OPCBridge.Mirror.Lab.Temperature`, `OPCBridge.Mirror.Lab.Pressure`) and address space browsing (`browse_items`).
 - Evaluates dynamic staleness on read without requiring background loops.
 - Emits frozen `OpcItemValue` records with defensive payload copies (`snapshot_batch`), preventing consumer modifications from corrupting the cache. Noncanonical nested payload copies can remain mutable, but do not reference cache state.
 - Converts timestamps to Windows FILETIME (100-ns intervals since 1601-01-01 UTC) with uint64 range bounds, mapping Unix epoch (0 us) to `116444736000000000` ticks.
@@ -83,7 +83,7 @@ All client write requests (DA 2.05a `IOPCSyncIO::Write`, DA 3.00 `IOPCSyncIO2::W
 
 ### 3.4 Isolated Windows Adapter & Explicit Mock (`opc_da_bridge.windows_mirror`)
 - The real server entry point checks `sys.platform == 'win32'`; the pure Python mock remains importable across platforms. Core has zero COM dependencies.
-- Defines proposed ProgID `OPCBridge.Mirror.1` and CLSID `{B7A45C89-4D3B-4921-9E9A-8F5D890E71E2}` (not registered on host).
+- Defines ProgID `OPCBridge.Mirror.1`, display name `OPCBridge Mirror`, browse root `OPCBridge.Mirror`, and stable CLSID `{B7A45C89-4D3B-4921-9E9A-8F5D890E71E2}` (not registered on host).
 - Separate real COM server entry point (`RealOpcDaComServer`, `start_real_com_server`) that checks platform and explicitly fails citing lack of licensed SDK runtime; never modifies registry.
 - Exposes `AdvosolPluginContract` as a conceptual Python sketch (C# cannot directly call Python in-memory objects without a defined local IPC/hosting boundary).
 - Exposes `MockOpcDaComServer` for testing:

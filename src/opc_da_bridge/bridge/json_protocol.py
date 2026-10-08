@@ -13,9 +13,9 @@ from opc_da_bridge.core.model import (
 )
 
 PROTOCOL_VERSION = 1
-DEMO_ITEMS = {
-    "OPCBridge.Demo.Temperature": ("Simulated.Furnace.Temperature", "float"),
-    "OPCBridge.Demo.Pressure": ("Simulated.Line.Pressure", "float"),
+MIRROR_ITEMS = {
+    "OPCBridge.Mirror.Lab.Temperature": ("Simulated.Furnace.Temperature", "float"),
+    "OPCBridge.Mirror.Lab.Pressure": ("Simulated.Line.Pressure", "float"),
 }
 
 
