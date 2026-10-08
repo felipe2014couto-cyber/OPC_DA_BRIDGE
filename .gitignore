@@ -1,0 +1,48 @@
+# Python byte-code and caches
+__pycache__/
+*.py[cod]
+*$py.class
+
+# Pytest and linter caches
+.pytest_cache/
+.ruff_cache/
+
+# Environments and builds
+.venv/
+venv/
+.vendor/
+.cache/
+.ruff_cache/
+.mypy_cache/
+.tox/
+__pycache__/
+.pytest_cache/
+build/
+dist/
+*.egg-info/
+*.dll
+*.exe
+*.pdb
+*.obj
+*.o
+*.lib
+*.ilk
+*.exp
+*.suo
+*.user
+*.log
+*.cer
+*.crt
+*.key
+*.pfx
+*.p12
+.env
+.env.*
+!.env.example
+local.*
+secrets.*
+
+# Ephemeral test certificates and logs
+*.pem
+*.log
+*.tmp
