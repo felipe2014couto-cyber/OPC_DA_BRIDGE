@@ -1,0 +1,24 @@
+[Unit]
+Description=OPC Bridge - Acesso HTTP autenticado ao configurador
+Wants=opc-bridge-management.service
+After=opc-bridge-management.service
+# Retry while the configured LAN address is still coming up during boot.
+StartLimitIntervalSec=0
+
+[Service]
+Type=simple
+WorkingDirectory=%h/dev/OPC-DA-Bridge
+ExecStartPre=/usr/sbin/nginx -t -p %h/dev/OPC-DA-Bridge/.opc-bridge-management/access/ -c nginx.conf
+ExecStart=/usr/sbin/nginx -p %h/dev/OPC-DA-Bridge/.opc-bridge-management/access/ -c nginx.conf
+Restart=on-failure
+RestartSec=5s
+KillSignal=SIGQUIT
+TimeoutStopSec=20s
+UMask=0077
+NoNewPrivileges=yes
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=opc-bridge-management-access
+
+[Install]
+WantedBy=default.target

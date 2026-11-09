@@ -1,0 +1,25 @@
+[Unit]
+Description=OPC Bridge - Configurador web com agente simulado
+StartLimitIntervalSec=60
+StartLimitBurst=5
+
+[Service]
+Type=simple
+WorkingDirectory=%h/dev/OPC-DA-Bridge
+Environment=PYTHONPATH=%h/dev/OPC-DA-Bridge/src
+Environment=PYTHONUNBUFFERED=1
+Environment=PYTHONDONTWRITEBYTECODE=1
+EnvironmentFile=-%h/dev/OPC-DA-Bridge/.opc-bridge-management/management.env
+ExecStart=/usr/bin/python3 -m opc_da_bridge.management --data-dir %h/dev/OPC-DA-Bridge/.opc-bridge-management --host 127.0.0.1 --port 8765
+Restart=on-failure
+RestartSec=3s
+KillSignal=SIGINT
+TimeoutStopSec=20s
+UMask=0077
+NoNewPrivileges=yes
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=opc-bridge-management
+
+[Install]
+WantedBy=default.target

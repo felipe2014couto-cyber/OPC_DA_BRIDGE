@@ -1,0 +1,22 @@
+{
+  "opc_da": {"prog_id": "ABB.AfwOpcDaSurrogate.1"},
+  "opc_ua": {
+    "host": "CHANGE_ME_TO_MACHINE_1_DNS_NAME",
+    "port": 4840,
+    "namespace_uri": "urn:opc-da-bridge:lab",
+    "security": {
+      "mode": "sign_and_encrypt",
+      "policy": "Basic256Sha256",
+      "application_uri": "urn:opc-da-bridge:lab:server",
+      "server_certificate": "pki/server-certificate.der",
+      "server_private_key": "pki/server-private-key.pem",
+      "trusted_client_certificates_dir": "pki/trusted-clients"
+    }
+  },
+  "update_interval_s": 1.0,
+  "log_file": "opc-da-ua-lab.log",
+  "tags": [
+    {"item_id": "Pims_A10L:ToPims.M120_NIVEL_DETERGENTE", "node_id": "Pims_A10L_ToPims_M120_NIVEL_DETERGENTE"},
+    {"item_id": "Pims_A40:gUsw.ToPims.RODANDO_ENROLADOR_SUC", "node_id": "Pims_A40_gUsw_ToPims_RODANDO_ENROLADOR_SUC"}
+  ]
+}

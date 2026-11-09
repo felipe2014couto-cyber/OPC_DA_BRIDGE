@@ -41,8 +41,19 @@ dist/
 !.env.example
 local.*
 secrets.*
+.opc-bridge-management/
 
 # Ephemeral test certificates and logs
 *.pem
 *.log
 *.tmp
+
+# Isolated discovery/relay builds and private laboratory fixtures
+.offline/discovery-*/
+.offline/opc-da-com-lab-build.*/
+
+# Private, reproducible laboratory build caches and deployment evidence.
+/.offline/
+**/target/
+*.sqlite3
+*.sqlite3-*

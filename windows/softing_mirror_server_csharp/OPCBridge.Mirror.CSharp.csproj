@@ -1,0 +1,29 @@
+<?xml version="1.0" encoding="utf-8"?>
+<Project ToolsVersion="15.0" xmlns="http://schemas.microsoft.com/developer/msbuild/2003">
+  <PropertyGroup>
+    <Configuration Condition=" '$(Configuration)' == '' ">Release</Configuration>
+    <Platform Condition=" '$(Platform)' == '' ">x86</Platform>
+    <ProjectGuid>{BE72D2DD-0CA3-4D64-9F48-03F7301AA05B}</ProjectGuid>
+    <OutputType>Exe</OutputType>
+    <RootNamespace>OPCBridge.Mirror.CSharp</RootNamespace>
+    <AssemblyName>OPCBridge.Mirror.CSharp</AssemblyName>
+    <TargetFrameworkVersion>v4.6.1</TargetFrameworkVersion>
+    <FileAlignment>512</FileAlignment>
+    <SoftingSdkRoot Condition=" '$(SoftingSdkRoot)' == '' ">$(MSBuildThisFileDirectory)..\..\.vendor\softing-opc-classic-sdk</SoftingSdkRoot>
+    <SoftingTbn>$(SoftingSdkRoot)\development\NET\src\bin\VS2017\AnyCPU\Release\TBN461.dll</SoftingTbn>
+  </PropertyGroup>
+  <PropertyGroup Condition=" '$(Configuration)|$(Platform)' == 'Release|x86' ">
+    <PlatformTarget>x86</PlatformTarget><OutputPath>bin\x86\Release\</OutputPath><Optimize>true</Optimize><DebugType>pdbonly</DebugType><DefineConstants>TRACE</DefineConstants><WarningLevel>4</WarningLevel>
+  </PropertyGroup>
+  <PropertyGroup Condition=" '$(Configuration)|$(Platform)' == 'Release|x64' ">
+    <PlatformTarget>x64</PlatformTarget><OutputPath>bin\x64\Release\</OutputPath><Optimize>true</Optimize><DebugType>pdbonly</DebugType><DefineConstants>TRACE</DefineConstants><WarningLevel>4</WarningLevel>
+  </PropertyGroup>
+  <ItemGroup>
+    <Reference Include="System" /><Reference Include="System.Core" />
+    <Reference Include="TBN461"><HintPath>$(SoftingTbn)</HintPath><Private>true</Private></Reference>
+  </ItemGroup>
+  <ItemGroup>
+    <Compile Include="src\LabData.cs" /><Compile Include="src\SoftingServer.cs" /><Compile Include="src\Program.cs" />
+  </ItemGroup>
+  <Import Project="$(MSBuildToolsPath)\Microsoft.CSharp.targets" />
+</Project>

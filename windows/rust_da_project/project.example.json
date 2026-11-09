@@ -1,0 +1,31 @@
+{
+  "schema_version": 1,
+  "name": "Laboratório",
+  "diagnostic_port": 49321,
+  "connections": [
+    {
+      "name": "Simulador local",
+      "modules": [
+        {
+          "name": "Processo",
+          "variables": [
+            {
+              "name": "Nivel_Detergente",
+              "data_type": "Double",
+              "description": "Valor simulado de laboratório (L)",
+              "node_id": "",
+              "initial_value": 485.7
+            },
+            {
+              "name": "Rodando_Enrolador",
+              "data_type": "Boolean",
+              "description": "Estado simulado de laboratório",
+              "node_id": "",
+              "initial_value": true
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}

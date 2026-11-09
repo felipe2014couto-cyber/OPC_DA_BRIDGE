@@ -1,0 +1,62 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>OPC Bridge — Configurador</title>
+  <link rel="stylesheet" href="/app.css">
+  <script src="/app.js" defer></script>
+</head>
+<body>
+  <header class="app-header">
+    <div class="brand"><span class="brand-mark" data-icon="bridge"></span><strong>OPC Bridge</strong><span class="brand-divider"></span><span>Configurador</span></div>
+    <div class="mode-badge"><span class="mode-dot"></span>Fontes simuladas</div>
+  </header>
+  <nav class="menu-bar" aria-label="Menu principal">
+    <button data-menu="file">Arquivo</button><button data-menu="edit" data-testid="menu-edit">Editar</button><button data-menu="view">Exibir</button><button data-menu="tools">Ferramentas</button><button data-menu="communication">Comunicação</button><button data-menu="help">Ajuda</button>
+    <span class="menu-note">Gerenciamento local · Linux</span>
+  </nav>
+  <div class="toolbar" role="toolbar" aria-label="Ações de configuração">
+    <button data-action="new-connection" data-testid="new-connection"><span data-icon="connection"></span>Nova conexão<span class="ellipsis">…</span></button>
+    <button data-action="new-machine" data-testid="new-machine"><span data-icon="machine"></span>Nova máquina</button>
+    <button data-action="new-module" data-testid="new-module"><span data-icon="module"></span>Novo módulo</button>
+    <button data-action="new-folder" data-testid="new-folder"><span data-icon="folder"></span>Nova pasta</button>
+    <button data-action="new-variable" data-testid="new-variable"><span data-icon="tag"></span>Nova variável</button>
+    <span class="toolbar-separator"></span>
+    <button data-action="connect" data-testid="connect"><span data-icon="play"></span>Conectar</button>
+    <button data-action="disconnect" data-testid="disconnect" disabled><span data-icon="stop"></span>Desconectar</button>
+    <button data-action="refresh" data-testid="refresh"><span data-icon="refresh"></span>Atualizar</button>
+  </div>
+  <div class="scope-banner"><span data-icon="info"></span><span id="scope-text">Fontes simuladas. Selecione uma máquina para conferir a aplicação no Windows.</span><span class="pending-pill" id="deployment-pill">Aplicação pendente</span></div>
+  <section id="deployment-panel" class="deployment-panel" hidden>
+    <div><strong id="deployment-machine"></strong><div id="deployment-status" data-testid="deployment-status"></div><div id="deployment-error" data-testid="deployment-error"></div></div>
+    <button id="verify-agent" data-testid="verify-agent">Verificar agente</button><button id="apply-machine" data-testid="apply-machine" class="primary-button">Aplicar na máquina</button>
+  </section>
+  <div id="notice" class="notice" role="alert" hidden><span id="notice-message"></span><button id="notice-close" aria-label="Fechar aviso">×</button></div>
+  <main class="workspace">
+    <aside class="tree-panel panel" aria-label="Hierarquia da configuração">
+      <div class="section-heading"><span data-icon="clipboard"></span><h1>Configuração</h1><span id="tree-total" class="heading-counter">0</span></div>
+      <div id="tree" class="tree" role="tree" aria-label="Conexões, máquinas, módulos e pastas"></div>
+      <div class="tree-footer"><span data-icon="shield"></span>Variáveis planejadas: somente leitura</div>
+    </aside>
+    <section class="content-panel">
+      <section class="variables-panel panel" aria-labelledby="variables-title">
+        <div id="breadcrumb" class="section-heading breadcrumb"><span data-icon="folder"></span><span>Selecione uma pasta</span></div>
+        <div class="table-heading"><h2 id="variables-title">Variáveis OPC DA</h2><div><span id="variable-count">0 variáveis</span><span class="small-sim-badge">simulado</span></div></div>
+        <div class="table-scroll" id="variables-scroll">
+          <table class="variables-table" aria-label="Variáveis da pasta selecionada"><thead><tr><th>Nome OPC DA <span class="sort-mark">▴</span></th><th>Origem</th><th>Tipo</th><th>Qualidade</th><th>Descrição</th><th>Valor</th></tr></thead><tbody id="variables-body"></tbody></table>
+          <div id="empty-state" class="empty-state"><div class="empty-symbol" data-icon="connection"></div><h3>Organize sua configuração</h3><p>Crie uma conexão, adicione uma máquina de destino e organize as variáveis em módulos e pastas.</p><button class="primary-button" data-action="new-connection">Criar conexão</button></div>
+        </div>
+        <div id="variable-details" class="variable-details" hidden></div>
+      </section>
+      <section class="events-panel panel" aria-labelledby="events-title">
+        <div class="section-heading"><span data-icon="clipboard"></span><h2 id="events-title">Eventos</h2><span id="event-count" class="heading-counter">0</span><label class="event-filter"><span class="sr-only">Filtrar eventos por nível</span><span data-icon="filter"></span><select id="event-filter" aria-label="Filtrar eventos"><option value="all">Todos os tipos</option><option value="info">Informação</option><option value="success">Sucesso</option><option value="warning">Aviso</option><option value="error">Erro</option></select></label></div>
+        <div class="events-scroll"><table class="events-table"><thead><tr><th></th><th>Data e hora</th><th>Tipo</th><th>Origem</th><th>Mensagem</th></tr></thead><tbody id="events-body"></tbody></table><p id="no-events" class="no-events">Os eventos do gerenciamento aparecerão aqui.</p></div>
+      </section>
+    </section>
+  </main>
+  <footer class="status-bar"><span class="connection-status"><span id="status-dot" class="status-dot"></span><span id="connection-status" data-testid="connection-status">Desconectado do simulador</span></span><span id="status-count">Variáveis: 0</span><span id="status-path">Nenhuma pasta selecionada</span><span id="save-status" class="save-status">Carregando configuração…</span></footer>
+  <div id="context-menu" class="context-menu" role="menu" hidden></div>
+  <div id="modal-layer" class="modal-layer" hidden><section id="dialog" class="dialog" role="dialog" aria-modal="true" aria-labelledby="dialog-title" data-testid="dialog"><header id="dialog-handle" class="dialog-header" data-testid="dialog-header"><span id="dialog-icon" data-icon="tag"></span><h2 id="dialog-title"></h2><button id="dialog-x" class="dialog-x" aria-label="Fechar janela">×</button></header><form id="editor-form" data-testid="editor-form" novalidate><div id="dialog-body" class="dialog-body"></div><p id="form-error" class="form-error" role="alert" data-testid="dialog-error" hidden></p><footer class="dialog-footer"><span id="dialog-hint">Salvo no gerenciamento · aplicação no Windows pendente</span><button type="button" id="dialog-cancel" data-testid="dialog-cancel">Cancelar</button><button type="submit" id="dialog-save" class="primary-button" data-testid="dialog-save">Salvar</button></footer></form></section></div>
+</body>
+</html>

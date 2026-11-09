@@ -1,0 +1,46 @@
+# Independent unprivileged nginx instance; rendered outside the repository.
+daemon off;
+worker_processes 1;
+worker_shutdown_timeout 10s;
+pid "${ACCESS_DIR}/nginx.pid";
+error_log stderr warn;
+
+events { worker_connections 128; }
+
+http {
+    server_tokens off;
+    access_log off;
+    client_max_body_size 64k;
+    client_body_timeout 10s;
+    client_header_timeout 10s;
+    keepalive_timeout 10s;
+    client_body_temp_path "${ACCESS_DIR}/client_temp";
+    proxy_temp_path "${ACCESS_DIR}/proxy_temp";
+    limit_req_zone $binary_remote_addr zone=opc_bridge_access:1m rate=10r/s;
+
+    server {
+        listen ${BIND_ADDRESS}:${LISTEN_PORT};
+        server_name ${BIND_ADDRESS};
+        if ($host != "${BIND_ADDRESS}") { return 400; }
+
+        auth_basic "OPC Bridge - Administracao";
+        auth_basic_user_file "${ACCESS_DIR}/users.htpasswd";
+        auth_delay 300ms;
+        limit_req zone=opc_bridge_access burst=20 nodelay;
+        limit_req_status 429;
+
+        location / {
+            proxy_pass http://127.0.0.1:${BACKEND_PORT};
+            proxy_http_version 1.1;
+            proxy_set_header Host 127.0.0.1:${BACKEND_PORT};
+            # Credentials stop at nginx. Preserve Origin for backend CSRF checks.
+            proxy_set_header Authorization "";
+            proxy_set_header Origin $http_origin;
+            proxy_set_header X-Forwarded-For $remote_addr;
+            proxy_set_header X-Forwarded-Proto $scheme;
+            proxy_set_header Connection "";
+            proxy_connect_timeout 5s;
+            proxy_read_timeout 15s;
+        }
+    }
+}

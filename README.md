@@ -1,6 +1,25 @@
 # OPC-DA-Bridge
 
+Estado consolidado do laboratório em 09/11/2026: [atualizações, testes e limitações](docs/ATUALIZACOES_LAB_2026-11-09.md). As seções originais da etapa 2 abaixo são históricas; os guias de laboratório registram a implementação COM posterior.
+
 Relatório consolidado da etapa 2, comparação dos SDKs e plano do laboratório: [STAGE2_HANDOVER.md](docs/STAGE2_HANDOVER.md).
+
+Primeira versão isolada do conversor OPC DA local → OPC UA: [guia do laboratório](docs/LAB_DA_TO_UA.md) e [configuração de exemplo](lab-config.example.json). Não altera o fluxo atual.
+
+Configurador web centralizado no Linux: [instalação, uso, arquitetura e testes](docs/WEB_CONFIGURATOR.md).
+Esta interface cadastra **Conexão → Máquina de destino → Módulo de origem → Pasta → Variáveis**,
+com persistência SQLite e leituras identificadas como **simuladas**. A aplicação isolada ao agente Windows por SSH está disponível no
+[guia de aplicação](docs/LAB_CONFIGURATION_DEPLOYMENT.md). A integração OPC UA → OPC DA
+continua futura; os builds anteriores foram preservados.
+
+```bash
+PYTHONPATH=src python3 -m opc_da_bridge.management --data-dir .opc-bridge-management --port 8765
+```
+
+Abra `http://127.0.0.1:8765` no Linux de execução. A inicialização automática
+no AUTOU3 está documentada na seção de serviço do [guia web](docs/WEB_CONFIGURATOR.md).
+O acesso HTTP autenticado pelo IP do AUTOU3 também está descrito nesse guia;
+as credenciais e a configuração específica de rede ficam fora do Git.
 
 Independent, platform-neutral OPC DA telemetry bridge, bounded latest-value cache, and read facade.
 
@@ -112,3 +131,10 @@ The demo displays:
 - **Tooling Notice**: Ruff is absent from the host environment and was not installed.
 - **No System Modifications**: No Windows registry modifications, COM registrations, service installs, firewall rules, or credentials were altered.
 - **Commercial Tooling Roadmap**: Full evaluation and deployment procedures for Advosol DANSrv are detailed in `docs/DECISIONS_REAL_OPC_DA_MIRROR.md` and `docs/STAGE2_REPORT.md`.
+
+### Descoberta OPC DA e relay de laboratório
+
+O fluxo de módulos com IP, busca de servidores via agente Windows autorizado e
+Item IDs separados está descrito em [OPC_DA_DISCOVERY_AND_RELAY.md](docs/OPC_DA_DISCOVERY_AND_RELAY.md).
+O novo caminho de amostras foi testado com fixtures e COM Windows isolado; a
+coleta ABB na máquina 1 e o novo caminho no PI Client ainda exigem validação.

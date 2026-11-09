@@ -1,0 +1,21 @@
+[package]
+name = "rust-da-com-lab"
+version = "0.1.0"
+edition = "2021"
+publish = false
+
+[dependencies]
+opc-da-lab-model = { path = "../rust_da_model" }
+opc-da-project = { path = "../rust_da_project" }
+serde_json = "=1.0.151"
+
+[target.'cfg(windows)'.dependencies]
+opc_da_bindings = { git = "https://github.com/Ronbb/rust_opc", rev = "da44a99265f9706618bbe506c98f714f2aa46f0b" }
+opc_classic_types = { git = "https://github.com/Ronbb/rust_opc", rev = "da44a99265f9706618bbe506c98f714f2aa46f0b" }
+opc_classic_utils = { git = "https://github.com/Ronbb/rust_opc", rev = "da44a99265f9706618bbe506c98f714f2aa46f0b" }
+windows = { version = "0.62.2", features = ["Win32_Foundation", "Win32_System_Com"] }
+windows-core = "0.62.2"
+
+[[bin]]
+name = "rust-da-com-lab"
+path = "src/main.rs"
