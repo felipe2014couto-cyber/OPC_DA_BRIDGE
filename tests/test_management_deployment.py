@@ -158,6 +158,36 @@ def test_reachable_agent_without_runtime_is_a_distinct_wait_condition(tmp_path, 
         SshLabChannel(tmp_path).invoke({"agent_dir": r"D:\Lab", "username": "lab", "host": "lab.invalid"}, "telemetry")
 
 
+def test_native_stream_is_opt_in_authenticated_and_isolated(tmp_path, monkeypatch):
+    key=tmp_path/'key';key.write_text('test fixture');key.chmod(0o600)
+    known=tmp_path/'known';known.write_text('test host fixture')
+    target={"host":"host.invalid","username":"lab","expected_hostname":"LAB",
+            "identity_file":str(key),"known_hosts_file":str(known),"agent_dir":r'D:\Lab',
+            "runtime_transport":"ssh_stream_v1", "stream_agent_dir":r'D:\Stream'}
+    made=[]
+    class Fake:
+        def __init__(self, args, **kwargs): self.args=args;self.requests=[];self.closed=False;made.append(self)
+        def request(self, payload): self.requests.append(payload);return {"ok":True,"pid":123},{"reused":len(self.requests)>1}
+        def close(self): self.closed=True
+    monkeypatch.setattr('opc_da_bridge.management.deployment.JsonLineProcess',Fake)
+    channel=SshLabChannel(tmp_path)
+    try:
+        for _ in range(2): channel.runtime(target,{"operation":"source-samples","machine_id":"lab-a"})
+        assert len(made)==1 and len(made[0].requests)==2
+        assert 'StrictHostKeyChecking=yes' in made[0].args
+        assert 'powershell' not in made[0].args[-1].lower()
+        assert made[0].requests[0]['schema_version']==1
+        assert made[0].requests[0]['expected_hostname']=='LAB'
+        other=dict(target,host='other.invalid')
+        channel.runtime(other,{"operation":"source-samples","machine_id":"lab-b"})
+        assert len(made)==2
+        assert made[0].requests[-1]['machine_id']=='lab-a'
+        target['stream_agent_dir']=r'D:\Stream;bad'
+        with pytest.raises(AgentError): channel.runtime(target,{})
+    finally: channel.close()
+    assert all(s.closed for s in made)
+
+
 def test_confirmation_is_required_before_showing_applied(tmp_path):
     import threading
     s, d, remote, machines, _ = setup(tmp_path)

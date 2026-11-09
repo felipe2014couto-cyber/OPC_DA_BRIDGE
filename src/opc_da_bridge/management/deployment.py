@@ -18,6 +18,7 @@ import time
 import uuid
 from pathlib import Path
 from .store import ManagementError, utc_now
+from .ssh_stream import JsonLineProcess, StreamError
 
 
 def encoded(value):
@@ -78,6 +79,47 @@ class RuntimeNotRunning(AgentError):
 class SshLabChannel:
     def __init__(self, directory):
         self.directory = Path(directory)
+        self.streams = {}
+        self.stream_lock = threading.RLock()
+
+    def close(self):
+        with self.stream_lock:
+            for stream in self.streams.values():
+                stream.close()
+            self.streams.clear()
+
+    def stream_request(self, target, script_name, payload, allow_error_reply=False):
+        if script_name not in ("opc-telemetry-agent.exe", "opc-source-agent.exe"):
+            raise AgentError("Agente persistente não permitido.")
+        options = self.options(target)
+        directory = target.get("stream_agent_dir", target["agent_dir"])
+        if not re.fullmatch(r"[A-Za-z]:\\[A-Za-z0-9_.\\-]+", directory) or ".." in directory:
+            raise AgentError("Diretório do agente persistente inválido.")
+        # Native stdin framing avoids Windows PowerShell 2 consuming the
+        # incoming stream as pipeline input. Source mode owns a bounded child.
+        argument, root = ("--lab-directory", target["agent_dir"]) if script_name == "opc-telemetry-agent.exe" else ("--source-directory", directory)
+        remote = '"' + directory + '\\opc-telemetry-agent.exe" ' + argument + ' "' + root + '"'
+        args = ["ssh"] + options + ["-T", target["username"] + "@" + target["host"], remote]
+        # Changing pinned trust or key material must not retain an old session.
+        stamps = tuple((key, Path(target[key]).stat().st_mtime_ns, Path(target[key]).stat().st_size)
+                       for key in ("identity_file", "known_hosts_file"))
+        key = (tuple(args), stamps)
+        with self.stream_lock:
+            stream = self.streams.get(key)
+            if stream is None:
+                # Bounded pool. A single-flight stream serializes clients of
+                # the same target; different targets never share a channel.
+                if len(self.streams) >= 4:
+                    self.streams.pop(next(iter(self.streams))).close()
+                stream = self.streams[key] = JsonLineProcess(args, max_requests=512, max_age_s=300)
+            try:
+                reply, timings = stream.request(payload)
+            except StreamError as failure:
+                raise AgentError(str(failure)) from None
+        if reply.get("ok") is not True and not allow_error_reply:
+            raise AgentError("Agente persistente recusou o pedido; nenhuma confirmação de aplicação.")
+        reply["transport_timings"] = timings
+        return reply
 
     @staticmethod
     def validate(target):
@@ -144,6 +186,8 @@ class SshLabChannel:
         envelope = dict(payload, deployment_id=str(uuid.uuid4()), schema_version=1,
                         expected_hostname=target["expected_hostname"], expected_address=target["host"])
         transport = target.get("runtime_transport")
+        if transport == "ssh_stream_v1":
+            return self.stream_request(target, "opc-telemetry-agent.exe", envelope)
         if transport == "ssh_stdin_v1":
             body = json.dumps(envelope, ensure_ascii=True, sort_keys=True, separators=(",", ":"), allow_nan=False).encode("ascii")
             return self.invoke(target, "telemetry", request_body=body)

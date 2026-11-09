@@ -37,6 +37,18 @@ class SshSourceChannel(SshLabChannel):
         expected_transport = target.get("read_transport") if request.get("operation") == "read" else None
         if expected_transport:
             request["transport"] = expected_transport
+        session_transport = target.get("read_session_transport")
+        if session_transport is not None and session_transport != "ssh_stream_v1":
+            raise AgentError("Transporte de sessão de origem não permitido.")
+        if session_transport == "ssh_stream_v1" and request.get("operation") == "read":
+            if expected_transport != "opc_da_automation":
+                raise AgentError("Sessão persistente exige OPC Automation provisionado.")
+            reply = self.stream_request(target, "opc-source-agent.exe", request, allow_error_reply=True)
+            if reply.get("ok") is not True:
+                raise SourceError("A sessão de origem não confirmou a leitura.", reply.get("hresult"), expected_transport, "source_error")
+            if reply.get("transport") != expected_transport:
+                raise SourceError("O agente respondeu por um transporte diferente do provisionado.", transport=expected_transport, error_code="transport_mismatch")
+            return reply
         script = target["agent_dir"] + "\\opc_da_source_agent.ps1"
         payload = base64.b64encode(encoded(request).encode("utf-8")).decode()
         command = "& '" + script + "' -RequestBase64 '" + payload + "'"
@@ -599,6 +611,10 @@ class Sources:
     def close(self):
         self.stop.set()
         if self.thread: self.thread.join(35)
+        # Never close a transport under an in-flight relay call.
+        if not self.thread or not self.thread.is_alive():
+            if hasattr(self.channel, "close"): self.channel.close()
+            if hasattr(self.deployments.channel, "close"): self.deployments.channel.close()
 
     def _loop(self):
         while not self.stop.wait(0.5):
@@ -820,6 +836,11 @@ class Sources:
                 samples = [{**item, "value": None, "quality": 8, "hresult": source_hresult,
                             "source_timestamp_filetime": None} for item in request["items"]]
             timings["source_read"] = round((time.monotonic() - read_started) * 1000, 1)
+            if not error:
+                # Agent-local monotonic durations; never subtract host clocks.
+                for key, value in reply.get("source_timing_ms", {}).items():
+                    if key in ("worker_initialization", "com_initialization", "add_items", "opc_read", "read_and_conversion") and type(value) in (int, float) and math.isfinite(value) and value >= 0:
+                        timings["source_agent_" + key] = round(value, 3)
             if self.stop.is_set(): return
             if not self._read_window(mid, module["id"])[0]:
                 self._state(mid, module["id"], "paused",
