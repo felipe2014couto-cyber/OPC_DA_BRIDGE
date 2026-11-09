@@ -11,7 +11,13 @@ from opc_da_bridge.management.deployment import AgentError, RuntimeNotRunning, D
 from opc_da_bridge.management.store import Store, ManagementError
 
 
-CLSID = "{11111111-2222-3333-4444-555555555555}"
+# Synthetic snapshot fixture values. Never use production or workstation identities in tests.
+SNAPSHOT_HOST = "snapshot.example.invalid"
+SNAPSHOT_PROGID = "Example.Cache.Server.1"
+SNAPSHOT_CLSID = "{11111111-2222-3333-4444-555555555555}"
+SNAPSHOT_AGENT_DIR = r"C:\Lab\Agent"
+SNAPSHOT_ITEMS = {"Example.Numeric": "Double", "Example.Boolean": "Boolean"}
+CLSID = "{22222222-3333-4444-5555-666666666666}"
 
 
 @pytest.mark.parametrize("reply,expected", [
@@ -110,7 +116,7 @@ class SourceChannel:
                     "read_method": "OPCGroup.SyncRead" if self.transport == "opc_da_automation" else None}
         return {"ok": True, "identity": identity, "transport": self.transport,
                 "read_method": "GET /v1/snapshot over SSH-local loopback" if self.transport == "rust_lab_loopback_snapshot" else None, "source_pid": 42 if self.transport == "rust_lab_loopback_snapshot" else None,
-                "source_session": 2 if self.transport == "rust_lab_loopback_snapshot" else None,
+                "source_session": 1 if self.transport == "rust_lab_loopback_snapshot" else None,
                 "samples": [sample(v) for v in request["items"]]}
 
 
@@ -136,16 +142,16 @@ def lab(tmp_path):
 
 def configure_persistent_snapshot(lab, include_second_machine=False):
     store, deployments, sources, channel, _ = lab
-    host = Sources.LAB_SNAPSHOT_HOST
+    host = SNAPSHOT_HOST
     channel.transport = "rust_lab_loopback_snapshot"
-    source_items = list(Sources.LAB_SNAPSHOT_ITEMS)
-    target = {"host": host, "expected_hostname": "RB1PI2", "expected_address": host,
+    source_items = list(SNAPSHOT_ITEMS)
+    target = {"host": host, "expected_hostname": "snapshot-lab", "expected_address": host,
               "expected_process_architecture": 32, "enabled": True,
-              "agent_dir": Sources.LAB_SNAPSHOT_AGENT_DIR,
+              "agent_dir": SNAPSHOT_AGENT_DIR,
               "read_transport": "rust_lab_loopback_snapshot",
-              "lab_snapshot": {"enabled": True, "prog_id": Sources.LAB_SNAPSHOT_PROGID,
-                  "clsid": Sources.LAB_SNAPSHOT_CLSID, "port": 49321,
-                  "items": [{"source_item_id": item, "data_type": Sources.LAB_SNAPSHOT_ITEMS[item]} for item in source_items]}}
+              "lab_snapshot": {"enabled": True, "prog_id": SNAPSHOT_PROGID,
+                  "clsid": SNAPSHOT_CLSID, "port": 49321,
+                  "items": [{"source_item_id": item, "data_type": SNAPSHOT_ITEMS[item]} for item in source_items]}}
     (store.directory / "source-agents.json").write_text(json.dumps({"sources": {host: target}}))
 
     def add(kind, data):
@@ -164,11 +170,11 @@ def configure_persistent_snapshot(lab, include_second_machine=False):
                     "source_id": source_items[1], "data_type": "Boolean", "initial_value": True})
         return machine, number, boolean
 
-    machine_id, number_id, boolean_id = machine_tree("RB1PI1", host)
-    second = machine_tree("Second target", "10.247.140.167") if include_second_machine else None
-    profile = {"schema_version": 1, "enabled": True, "profile_id": "rb1pi2-rustda-cache-view",
-               "machine_id": machine_id, "source_host": host, "prog_id": Sources.LAB_SNAPSHOT_PROGID,
-               "clsid": Sources.LAB_SNAPSHOT_CLSID, "interval_s": 5,
+    machine_id, number_id, boolean_id = machine_tree("LabMachine", host)
+    second = machine_tree("Second target", "other.example.invalid") if include_second_machine else None
+    profile = {"schema_version": 1, "enabled": True, "profile_id": "snapshot-cache-view",
+               "machine_id": machine_id, "source_host": host, "prog_id": SNAPSHOT_PROGID,
+               "clsid": SNAPSHOT_CLSID, "interval_s": 5,
                "bindings": [
                    {"variable_id": number_id, "published_item_id": source_items[0],
                     "source_item_id": source_items[0], "data_type": "Double"},
@@ -192,22 +198,22 @@ def test_discovery_none_single_multiple_does_not_connect(lab, count):
 
 def test_same_windows_host_can_keep_snapshot_and_opc_da_profiles_isolated(lab):
     store, _, sources, _, _ = lab
-    host = Sources.LAB_SNAPSHOT_HOST
+    host = SNAPSHOT_HOST
     snapshot = {"host": host, "enabled": True,
                 "read_transport": "rust_lab_loopback_snapshot", "profile_id": "cache-only"}
     automation = {"host": host, "enabled": True, "read_transport": "opc_da_automation",
-                  "allowed_progids": ["RustDaBridge.SourceLab.1"],
+                  "allowed_progids": ["Example.Source.1"],
                   "source_environment": "laboratory"}
     (store.directory / "source-agents.json").write_text(json.dumps({"schema_version": 1,
-        "sources": {host: snapshot, "rb1pi2-opc-da-source-lab": automation}}))
+        "sources": {host: snapshot, "second-source-profile": automation}}))
 
     # Read the persisted mapping back: selecting one transport must not replace
     # or accidentally return the other profile for the same SSH identity.
     assert sources.provision(host, "rust_lab_loopback_snapshot")["profile_id"] == "cache-only"
-    selected = sources.provision(host, "opc_da_automation", "RustDaBridge.SourceLab.1")
+    selected = sources.provision(host, "opc_da_automation", "Example.Source.1")
     assert selected["source_environment"] == "laboratory"
     with pytest.raises(AgentError):
-        sources.provision(host, "opc_da_automation", "RustDaBridge.Lab.1")
+        sources.provision(host, "opc_da_automation", "Example.Cache.1")
 
 
 def test_discovery_and_selection_can_use_hash_pinned_direct_com_fixture(lab):
@@ -218,7 +224,7 @@ def test_discovery_and_selection_can_use_hash_pinned_direct_com_fixture(lab):
     profiles = {
         host: {"host": host, "expected_hostname": "ORIGIN", "enabled": True,
                "read_transport": "rust_lab_loopback_snapshot",
-               "allowed_progids": ["RustDaBridge.Lab.1"]},
+               "allowed_progids": ["Example.Cache.1"]},
         "origin-direct-fixture": {"host": host, "expected_hostname": "ORIGIN", "enabled": True,
                "read_transport": "rust_da_com_fixture", "source_environment": "laboratory",
                "allowed_progids": ["Lab.Server.0"]},
@@ -234,7 +240,7 @@ def test_discovery_and_selection_can_use_hash_pinned_direct_com_fixture(lab):
     selection["source_clsid"] = result["servers"][0]["clsid"]
     sources.validate_selection(selection)
     assert sources.provision(host, prog_id="Lab.Server.0")["read_transport"] == "rust_da_com_fixture"
-    assert sources.provision(host, prog_id="RustDaBridge.Lab.1")["read_transport"] == "rust_lab_loopback_snapshot"
+    assert sources.provision(host, prog_id="Example.Cache.1")["read_transport"] == "rust_lab_loopback_snapshot"
 
 
 def test_relay_uses_direct_com_fixture_transport_and_preserves_samples(lab):
@@ -323,8 +329,8 @@ def test_relay_preserves_source_and_published_ids_vqt_hresult_and_isolation(lab)
 
 def test_explicit_float_to_double_conversion_preserves_source_evidence(lab):
     _, _, sources, _, _ = lab
-    variable = {"item_id": "RB1PI1.TESTE.TESTE1.TESTE2",
-                "source_id": "Channel_0_User_Defined.Ramp.Ramp_Float",
+    variable = {"item_id": "Lab.Numeric",
+                "source_id": "ExampleChannel.Device.Ramp",
                 "data_type": "Double", "source_data_type": "Float",
                 "source_conversion": "float_to_double"}
     request = sources._source_item_request(variable)
@@ -346,6 +352,56 @@ def test_explicit_float_to_double_conversion_preserves_source_evidence(lab):
         invalid = dict(sample, **{key: value})
         with pytest.raises(SourceError):
             sources._validate_opc_samples([variable], [invalid], "opc_da_automation")
+
+
+@pytest.mark.parametrize('kind,value,source_vt,published_vt', [
+    ('Double', 12.5, 4, 5), ('Double', 7, 3, 5),
+    ('Integer', -2147483648, 2, 3), ('Integer', 42, 8, 3),
+    ('String', 'Ação\x00🚀', 8, 8), ('String', '12.5', 5, 8),
+    ('Boolean', False, 11, 11), ('Boolean', True, 3, 11),
+])
+def test_auto_scalar_output_keeps_source_evidence_and_timestamp(lab, kind, value, source_vt, published_vt):
+    _, _, sources, _, _ = lab
+    variable = {'item_id': 'Published.Selected', 'source_id': 'Authorized.Source',
+                'data_type': kind, 'source_data_type': 'Auto', 'source_conversion': 'automatic'}
+    raw = dict(sources._source_item_request(variable), value=value, source_vartype=source_vt,
+               published_vartype=published_vt, quality=192, hresult=0,
+               source_timestamp_filetime=134384724655270000)
+    result = sources._validate_opc_samples([variable], [raw], 'opc_da_automation')[0]
+    assert result['value'] == value
+    assert result['source_vartype'] == source_vt and result['published_vartype'] == published_vt
+    assert result['source_data_type'] == 'Auto' and result['source_conversion'] == 'automatic'
+    assert result['quality'] == 192 and result['source_timestamp_filetime'] == 134384724655270000
+
+
+@pytest.mark.parametrize('kind,value,source_vt,published_vt', [
+    ('Double', float('inf'), 4, 5), ('Double', True, 11, 5),
+    ('Integer', 2.5, 5, 3), ('Integer', 2147483648, 19, 3),
+    ('String', 'x'*4097, 8, 8), ('String', '\ud800', 8, 8),
+    ('Boolean', 1, 3, 11), ('Boolean', False, 8203, 11),
+    ('Boolean', False, True, 11), ('String', 'x', 8, 3),
+])
+def test_auto_scalar_rejects_invalid_output_or_variant(lab, kind, value, source_vt, published_vt):
+    _, _, sources, _, _ = lab
+    variable = {'item_id': 'Published.Selected', 'source_id': 'Authorized.Source',
+                'data_type': kind, 'source_data_type': 'Auto', 'source_conversion': 'automatic'}
+    raw = dict(sources._source_item_request(variable), value=value, source_vartype=source_vt,
+               published_vartype=published_vt, quality=192, hresult=0,
+               source_timestamp_filetime=134384724655270000)
+    with pytest.raises(SourceError):
+        sources._validate_opc_samples([variable], [raw], 'opc_da_automation')
+
+
+@pytest.mark.parametrize('kind,initial', [('Double', 0.0), ('Integer', 0), ('String', ''), ('Boolean', False)])
+def test_store_persists_automatic_four_type_binding_without_renaming(lab, kind, initial):
+    store, _, _, _, _ = lab
+    _, _, variable_id = configure(lab, 'automatic')
+    old = store.variables([variable_id])[0]
+    store.mutate('update', 'variables', {'data_type': kind, 'initial_value': initial,
+                 'source_data_type': 'Auto', 'source_conversion': 'automatic'}, store.revision(), variable_id)
+    new = store.variables([variable_id])[0]
+    assert new['item_id'] == old['item_id'] and new['source_id'] == old['source_id']
+    assert new['data_type'] == kind and new['source_conversion'] == 'automatic'
 
 
 def test_store_persists_only_authorized_opc_float_to_double_mapping(lab):
@@ -377,7 +433,7 @@ def test_float_to_double_is_relayed_to_published_item_without_losing_origin_meta
     machine_id, module_id, variable_id = configure(lab, "float-relay")
     variable = store.variables([variable_id])[0]
     data = {key: value for key, value in variable.items() if key not in ("id", "read_only")}
-    data.update(source_id="Channel_0_User_Defined.Ramp.Ramp_Float",
+    data.update(source_id="ExampleChannel.Device.Ramp",
                 source_data_type="Float", source_conversion="float_to_double")
     store.mutate("update", "variables", data, store.revision(), variable_id)
     state, machine = deployments.machine(machine_id)
@@ -389,13 +445,13 @@ def test_float_to_double_is_relayed_to_published_item_without_losing_origin_meta
 
     sources.poll_once(machine, module, state)
     assert channel.requests[-1]["items"] == [{
-        "source_item_id": "Channel_0_User_Defined.Ramp.Ramp_Float",
+        "source_item_id": "ExampleChannel.Device.Ramp",
         "item_id": "Published.float-relay", "data_type": "Double",
         "source_data_type": "Float", "source_conversion": "float_to_double"}]
     sent = next(x for x in dest.sent if x.get("operation") == "source-samples")
     sample = sent["samples"][0]
     assert sample["item_id"] == "Published.float-relay"
-    assert sample["source_item_id"] == "Channel_0_User_Defined.Ramp.Ramp_Float"
+    assert sample["source_item_id"] == "ExampleChannel.Device.Ramp"
     assert sample["value"] == 61.75 and sample["data_type"] == "Double"
     assert sample["source_vartype"] == 4 and sample["published_vartype"] == 5
     assert sample["source_data_type"] == "Float" and sample["source_conversion"] == "float_to_double"
@@ -403,7 +459,7 @@ def test_float_to_double_is_relayed_to_published_item_without_losing_origin_meta
     exported = json.loads(envelope["project_json"])
     configured = exported["connections"][0]["modules"][0]["variables"][0]
     assert configured["item_id"] == "Published.float-relay"
-    assert configured["source"]["item_id"] == "Channel_0_User_Defined.Ramp.Ramp_Float"
+    assert configured["source"]["item_id"] == "ExampleChannel.Device.Ramp"
     assert configured["source"]["source_data_type"] == "Float"
 
 
@@ -468,10 +524,10 @@ def test_persistent_dashboard_snapshot_is_overlay_only_and_isolated_between_mach
     machine_id, number_id, boolean_id, profile, second = configure_persistent_snapshot(lab, True)
     before = store.state(False)
     _, machine = deployments.machine(machine_id)
-    exported_before = export_project(before, machine_id, {"expected_hostname": "RB1PI2", "host": Sources.LAB_SNAPSHOT_HOST})
+    exported_before = export_project(before, machine_id, {"expected_hostname": "snapshot-lab", "host": SNAPSHOT_HOST})
     sources._poll_dashboard_snapshot()
     after = store.state(False)
-    exported_after = export_project(after, machine_id, {"expected_hostname": "RB1PI2", "host": Sources.LAB_SNAPSHOT_HOST})
+    exported_after = export_project(after, machine_id, {"expected_hostname": "snapshot-lab", "host": SNAPSHOT_HOST})
     rows = store.variables([number_id, boolean_id, second[1], second[2]])
     samples = sources.dashboard_samples_for(rows)
 
@@ -540,8 +596,8 @@ def test_opc_da_variables_bypass_legacy_snapshot_overlay(lab):
     state = store.state(False)
     module = next(module for connection in state["connections"] for machine in connection["machines"]
                   for module in machine["modules"] if module["name"] == "TESTE")
-    source = {"source_kind": "opc_da", "source_host": Sources.LAB_SNAPSHOT_HOST,
-              "source_progid": "RustDaBridge.SourceLab.1", "source_clsid": CLSID,
+    source = {"source_kind": "opc_da", "source_host": SNAPSHOT_HOST,
+              "source_progid": "Example.Source.1", "source_clsid": CLSID,
               "source_discovery_id": "00000000-0000-0000-0000-000000000001", "update_interval_s": 5}
     store.mutate("update", "modules", source, store.revision(), module["id"])
 
@@ -562,7 +618,7 @@ def test_invalid_persistent_profile_downgrades_last_snapshot_without_changing_ca
     _, number_id, boolean_id, profile, _ = configure_persistent_snapshot(lab)
     sources._poll_dashboard_snapshot()
     revision = store.revision()
-    profile["source_host"] = "10.247.140.167"
+    profile["source_host"] = "other.example.invalid"
     (store.directory / "lab-dashboard-snapshot.json").write_text(json.dumps(profile))
     sources._poll_dashboard_snapshot()
     current = sources.dashboard_samples_for(store.variables([number_id, boolean_id]))
@@ -695,3 +751,104 @@ def test_corrupt_discovery_catalog_does_not_replace_saved_configuration(lab):
     assert reloaded.catalog_error and sources.path.read_text() == "broken"
     with pytest.raises(ManagementError): reloaded.discover("origin.invalid")
     assert store.state(False) == before
+
+
+def test_bounded_read_window_isolates_pauses_and_recovers(lab, monkeypatch):
+    store, deployments, sources, channel, dest = lab
+    mid, _, _ = configure(lab)
+    state, machine = deployments.machine(mid)
+    module = machine['modules'][0]
+    path = store.directory / 'relay-read-windows.json'
+    clock = [100.]
+    monkeypatch.setattr('opc_da_bridge.management.sources.time.time', lambda: clock[0])
+    path.write_text(json.dumps({'schema_version': 1, 'windows': {module['id']: {
+        'machine_id': mid, 'not_before_unix_ms': 100000, 'until_unix_ms': 110000}}}))
+    channel.requests.clear()
+    sources.poll_once(machine, module, state)
+    assert sources.status(mid)['status'] == 'connected'
+    assert channel.requests
+    count = len(channel.requests)
+    sent = len(dest.sent)
+    clock[0] = 110.
+    sources.poll_once(machine, module, state)
+    assert sources.status(mid)['status'] == 'paused'
+    assert len(channel.requests) == count and len(dest.sent) == sent
+    assert sources._read_window(mid, 'another-module') == (True, None)
+    clock[0] = 105.
+    sources.poll_once(machine, module, state)
+    assert sources.status(mid)['status'] == 'connected'
+    assert len(channel.requests) > count
+
+
+@pytest.mark.parametrize('content', ['invalid', '{"schema_version":1,"windows":[]}',
+    '{"schema_version":1,"windows":{"selected":{"machine_id":"other","not_before_unix_ms":0,"until_unix_ms":1000}}}'])
+def test_bounded_read_window_invalid_control_fails_closed(lab, content):
+    store, _, sources, _, _ = lab
+    (store.directory / 'relay-read-windows.json').write_text(content)
+    assert sources._read_window('machine', 'selected')[0] is False
+
+
+def test_bounded_window_expiring_during_source_call_does_not_deliver(lab, monkeypatch):
+    store, deployments, sources, channel, dest = lab
+    mid, _, _ = configure(lab)
+    state, machine = deployments.machine(mid)
+    module = machine['modules'][0]
+    clock = [100.]
+    monkeypatch.setattr('opc_da_bridge.management.sources.time.time', lambda: clock[0])
+    (store.directory / 'relay-read-windows.json').write_text(json.dumps({
+        'schema_version': 1, 'windows': {module['id']: {
+            'machine_id': mid, 'not_before_unix_ms': 100000, 'until_unix_ms': 110000}}}))
+    original = channel.request
+    def request(*args):
+        reply = original(*args)
+        clock[0] = 110.
+        return reply
+    channel.request = request
+    sources.poll_once(machine, module, state)
+    assert sources.status(mid)['status'] == 'paused'
+    assert not any(x.get('operation') == 'source-samples' for x in dest.sent)
+
+
+def test_continuous_collection_can_stop_without_changing_catalog(lab, monkeypatch):
+    store, deployments, sources, channel, dest = lab
+    mid, _, _ = configure(lab)
+    state, machine = deployments.machine(mid)
+    module = machine['modules'][0]
+    path = store.directory / 'relay-read-windows.json'
+    control = {'schema_version': 1, 'windows': {module['id']: {
+        'machine_id': mid, 'mode': 'continuous', 'enabled': True}}}
+    path.write_text(json.dumps(control))
+    before = store.state(False)
+    # Continuous operation remains permitted after the bounded window limit.
+    for clock in [100., 1000.]:
+        monkeypatch.setattr('opc_da_bridge.management.sources.time.time', lambda: clock)
+        sources.poll_once(machine, module, state)
+        assert sources.status(mid)['status'] == 'connected'
+    assert sources.status(mid)['origins'][0]['source_environment'] == 'real_read_only'
+    assert sources._collection_interval(mid, dict(module, update_interval_s=5)) == 10
+    assert sources._collection_interval(mid, dict(module, update_interval_s=20)) == 20
+    assert sources._collection_interval('another-machine', dict(module, update_interval_s=5)) == 5
+    requests, deliveries = len(channel.requests), len(dest.sent)
+    control['windows'][module['id']]['enabled'] = False
+    path.write_text(json.dumps(control))
+    sources.poll_once(machine, module, state)
+    assert sources.status(mid)['status'] == 'paused'
+    assert len(channel.requests) == requests and len(dest.sent) == deliveries
+    assert sources._read_window(mid, 'unrelated-module') == (True, None)
+    assert store.state(False) == before
+
+
+@pytest.mark.parametrize('entry', [
+    {'machine_id': 'other', 'mode': 'continuous', 'enabled': True},
+    {'machine_id': 'machine', 'mode': 'continuous', 'enabled': 'true'},
+    {'machine_id': 'machine', 'mode': 'continuous'},
+    {'machine_id': 'machine', 'mode': 'continuous', 'enabled': True, 'interval_s': 0},
+    {'machine_id': 'machine', 'mode': 'continuous', 'enabled': True, 'interval_s': True},
+    {'machine_id': 'machine', 'mode': 'continuous', 'enabled': True, 'interval_s': '10'},
+    {'machine_id': 'machine', 'mode': 'unknown', 'enabled': True},
+])
+def test_continuous_collection_requires_explicit_permission_and_identity(lab, entry):
+    store, _, sources, _, _ = lab
+    (store.directory / 'relay-read-windows.json').write_text(json.dumps({
+        'schema_version': 1, 'windows': {'selected': entry}}))
+    assert sources._read_window('machine', 'selected')[0] is False

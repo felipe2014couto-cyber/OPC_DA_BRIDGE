@@ -107,44 +107,44 @@ pub fn pattern_matches(pattern: &str, value: &str) -> bool {
 mod tests {
     use super::*;
     fn catalog() -> Vec<Entry> {
-        ["RB1PI1.TESTE.TESTE1.DIGITAL", "RB1PI1.TESTE.TESTE1.PRESSAO",
-         "RB1PI1.TESTE.TESTE1.TESTE1", "RB1PI1.TESTE.TESTE1.TESTE2",
-         "LFS_TD1_PB2.RB1PI2.Current.Velocidade"].iter().map(|id| Entry {
-            item_id: (*id).into(), data_type: if id.ends_with("DIGITAL") {11} else {5}, access_rights: 1
+        ["AreaA.UnitA.Values.Boolean", "AreaA.UnitA.Values.Pressure",
+         "AreaA.UnitA.Values.Item1", "AreaA.UnitA.Values.Item2",
+         "AreaB.UnitB.Current.Speed"].iter().map(|id| Entry {
+            item_id: (*id).into(), data_type: if id.ends_with("Boolean") {11} else {5}, access_rights: 1
         }).collect()
     }
     #[test] fn branch_leaf_and_flat_are_distinct() {
         let e=catalog(); let mut p=Position::default();
-        assert_eq!(p.enumerate(1,"",0,0,&e).unwrap(), ["LFS_TD1_PB2","RB1PI1"]);
+        assert_eq!(p.enumerate(1,"",0,0,&e).unwrap(), ["AreaA","AreaB"]);
         assert!(p.enumerate(2,"",0,0,&e).unwrap().is_empty());
         assert_eq!(p.enumerate(3,"",0,0,&e).unwrap().len(),5);
-        for branch in ["LFS_TD1_PB2","RB1PI2","Current"] { p.change(2,branch,&e).unwrap(); }
-        assert_eq!(p.enumerate(2,"",0,0,&e).unwrap(),["Velocidade"]);
-        assert_eq!(p.resolve("Velocidade",&e).unwrap(),"LFS_TD1_PB2.RB1PI2.Current.Velocidade");
-        assert_eq!(p.enumerate(3,"",0,0,&e).unwrap(),["LFS_TD1_PB2.RB1PI2.Current.Velocidade"]);
+        for branch in ["AreaB","UnitB","Current"] { p.change(2,branch,&e).unwrap(); }
+        assert_eq!(p.enumerate(2,"",0,0,&e).unwrap(),["Speed"]);
+        assert_eq!(p.resolve("Speed",&e).unwrap(),"AreaB.UnitB.Current.Speed");
+        assert_eq!(p.enumerate(3,"",0,0,&e).unwrap(),["AreaB.UnitB.Current.Speed"]);
     }
     #[test] fn up_to_root_terminates_and_invalid_moves_are_atomic() {
         let e=catalog();let mut p=Position::default();
-        p.change(3,"RB1PI1.TESTE.TESTE1",&e).unwrap();
+        p.change(3,"AreaA.UnitA.Values",&e).unwrap();
         for _ in 0..3 { p.change(1,"",&e).unwrap(); }
         for _ in 0..8 {assert_eq!(p.change(1,"",&e),Err(BrowseError::AboveRoot));}
-        for (d,s) in [(0,""),(2,"missing"),(2,"RB1PI1.TESTE"),(3,"RB1PI1.TESTE.TESTE1.TESTE2")] {
+        for (d,s) in [(0,""),(2,"missing"),(2,"AreaA.UnitA"),(3,"AreaA.UnitA.Values.Item2")] {
             assert_eq!(p.change(d,s,&e),Err(BrowseError::InvalidArgument));assert_eq!(p.path(),"");
         }
     }
     #[test] fn filters_do_not_hide_navigation_branches() {
         let e=catalog();let mut p=Position::default();
-        assert_eq!(p.enumerate(1,"R*",11,2,&e).unwrap(),["RB1PI1"]);
-        p.change(3,"RB1PI1.TESTE.TESTE1",&e).unwrap();
-        assert_eq!(p.enumerate(2,"*",11,1,&e).unwrap(),["DIGITAL"]);
-        assert_eq!(p.enumerate(2,"TESTE?",5,1,&e).unwrap(),["TESTE1","TESTE2"]);
+        assert_eq!(p.enumerate(1,"A*",11,2,&e).unwrap(),["AreaA"]);
+        p.change(3,"AreaA.UnitA.Values",&e).unwrap();
+        assert_eq!(p.enumerate(2,"*",11,1,&e).unwrap(),["Boolean"]);
+        assert_eq!(p.enumerate(2,"Item?",5,1,&e).unwrap(),["Item1","Item2"]);
         assert!(p.enumerate(2,"*",0,2,&e).unwrap().is_empty());
     }
     #[test] fn clients_have_independent_positions_and_full_ids_are_stable() {
         let e=catalog();let mut a=Position::default();let b=Position::default();
-        a.change(3,"LFS_TD1_PB2.RB1PI2.Current",&e).unwrap();
+        a.change(3,"AreaB.UnitB.Current",&e).unwrap();
         assert_eq!(b.path(),"");
-        assert_eq!(a.resolve("RB1PI1.TESTE.TESTE1.DIGITAL",&e).unwrap(),e[0].item_id);
+        assert_eq!(a.resolve("AreaA.UnitA.Values.Boolean",&e).unwrap(),e[0].item_id);
         assert_eq!(a.resolve("",&e).unwrap(),a.path());
         assert!(a.resolve("missing",&e).is_err());
     }
@@ -152,5 +152,15 @@ mod tests {
         let e:Vec<Entry>=["A","A.X","AB.Y"].iter().map(|s|Entry{item_id:(*s).into(),data_type:5,access_rights:1}).collect();
         let mut p=Position::default();assert_eq!(p.enumerate(2,"",0,0,&e).unwrap(),["A"]);
         p.change(2,"A",&e).unwrap();assert_eq!(p.enumerate(3,"",0,0,&e).unwrap(),["A.X"]);
+    }
+    #[test] fn configured_real_and_boolean_items_share_a_hierarchical_folder() {
+        let e:Vec<Entry>=[
+            "LabServer.Module.Real.Boolean",
+            "LabServer.Module.Real.Value",
+        ].iter().map(|id|Entry{item_id:(*id).into(),data_type:5,access_rights:1}).collect();
+        let mut p=Position::default();
+        for branch in ["LabServer","Module","Real"] {p.change(2,branch,&e).unwrap();}
+        assert_eq!(p.enumerate(2,"",0,0,&e).unwrap(),["Boolean","Value"]);
+        assert_eq!(p.resolve("Value",&e).unwrap(),"LabServer.Module.Real.Value");
     }
 }

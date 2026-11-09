@@ -12,10 +12,30 @@ pub const MAX_CONFIG_BYTES: u64 = 1_048_576;
 pub enum DataType {
     Boolean,
     Double,
+    Integer,
+    String,
+}
+
+impl DataType {
+    pub fn vartype(self) -> u16 {
+        match self {
+            Self::Boolean => 11,
+            Self::Double => 5,
+            Self::Integer => 3,
+            Self::String => 8,
+        }
+    }
+}
+
+pub fn is_supported_scalar_vartype(vartype: u16) -> bool {
+    matches!(vartype, 2 | 3 | 4 | 5 | 8 | 11 | 16 | 17 | 18 | 19 | 20 | 21 | 22 | 23)
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub enum SourceDataType {
+    Auto,
+    Integer,
+    String,
     Boolean,
     Double,
     Float,
@@ -23,6 +43,8 @@ pub enum SourceDataType {
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub enum SourceConversion {
+    #[serde(rename = "automatic")]
+    Automatic,
     #[serde(rename = "float_to_double")]
     FloatToDouble,
 }
@@ -31,19 +53,39 @@ pub enum SourceConversion {
 #[serde(untagged)]
 pub enum SimValue {
     Boolean(bool),
+    Integer(i32),
     Double(f64),
+    String(String),
 }
 impl SimValue {
     pub fn data_type(&self) -> DataType {
         match self {
             Self::Boolean(_) => DataType::Boolean,
             Self::Double(_) => DataType::Double,
+            Self::Integer(_) => DataType::Integer,
+            Self::String(_) => DataType::String,
+        }
+    }
+    /// JSON does not distinguish integral Doubles from Integers. The declared
+    /// output type is authoritative; normalize only lossless numeric forms.
+    pub fn for_type(self, data_type: DataType) -> Option<Self> {
+        match (data_type, self) {
+            (DataType::Double, Self::Integer(v)) => Some(Self::Double(f64::from(v))),
+            (DataType::Double, Self::Double(v)) if v.is_finite() => Some(Self::Double(v)),
+            (DataType::Integer, Self::Integer(v)) => Some(Self::Integer(v)),
+            (DataType::Integer, Self::Double(v)) if v.is_finite() && v.fract() == 0.0
+                && v >= f64::from(i32::MIN) && v <= f64::from(i32::MAX) => Some(Self::Integer(v as i32)),
+            (DataType::Boolean, Self::Boolean(v)) => Some(Self::Boolean(v)),
+            (DataType::String, Self::String(v)) if v.encode_utf16().count() <= 4096 => Some(Self::String(v)),
+            _ => None,
         }
     }
     pub fn display(&self) -> String {
         match self {
             Self::Boolean(v) => v.to_string(),
             Self::Double(v) => v.to_string(),
+            Self::Integer(v) => v.to_string(),
+            Self::String(v) => v.clone(),
         }
     }
 }
@@ -181,8 +223,7 @@ impl Project {
                             module.name, variable.name
                         ));
                     }
-                    if variable.data_type != variable.initial_value.data_type()
-                        || matches!(variable.initial_value,SimValue::Double(v) if !v.is_finite())
+                    if variable.initial_value.clone().for_type(variable.data_type).is_none()
                     {
                         return Err(format!(
                             "Valor inicial incompatível com o tipo de {}.",
@@ -198,6 +239,7 @@ impl Project {
                         match (source.source_data_type, source.source_conversion, variable.data_type) {
                             (None, None, _) => {}
                             (Some(SourceDataType::Float), Some(SourceConversion::FloatToDouble), DataType::Double) => {}
+                            (Some(SourceDataType::Auto), Some(SourceConversion::Automatic), _) => {}
                             _ => return Err("Conversão/tipo de origem OPC DA não suportado.".into()),
                         }
                     }
@@ -477,7 +519,7 @@ impl ProjectRuntime {
         for v in self.project.published_variables() {
             if v.variable.source.is_some() { continue; }
             let sample = self.samples.get_mut(&v.item_id).expect("validated catalog");
-            sample.value = Some(v.variable.initial_value);
+            sample.value = v.variable.initial_value.for_type(v.variable.data_type);
             sample.source_timestamp_filetime = timestamp.filter(|t| *t != 0);
             sample.quality = if sample.source_timestamp_filetime.is_some() {
                 0xc0
@@ -527,23 +569,31 @@ impl ProjectRuntime {
                 sample.quality = source.quality & !0xc0; // Retain last known value/time only as Bad.
                 continue;
             }
-            let value = source.value.ok_or("Amostra sem valor válido")?;
-            if value.data_type() != variable.data_type || matches!(value, SimValue::Double(v) if !v.is_finite()) {
-                return Err("Tipo de valor incompatível".into());
-            }
-            let expected_source_vt = match variable.source.as_ref().and_then(|s| s.source_data_type) {
+            let value = source.value.ok_or("Amostra sem valor válido")?
+                .for_type(variable.data_type).ok_or("Tipo de valor incompatível")?;
+            let binding = variable.source.as_ref().expect("source variable");
+            let expected_published_vt = variable.data_type.vartype();
+            let automatic = binding.source_data_type == Some(SourceDataType::Auto)
+                && binding.source_conversion == Some(SourceConversion::Automatic);
+            let expected_source_vt = match binding.source_data_type {
                 Some(SourceDataType::Float) => 4,
                 Some(SourceDataType::Boolean) => 11,
                 Some(SourceDataType::Double) => 5,
-                None => if variable.data_type == DataType::Boolean {11} else {5},
+                Some(SourceDataType::Integer) => 3,
+                Some(SourceDataType::String) => 8,
+                Some(SourceDataType::Auto) => 0,
+                None => expected_published_vt,
             };
-            let expected_published_vt = if variable.data_type == DataType::Boolean {11} else {5};
-            let binding = variable.source.as_ref().expect("source variable");
+            let valid_source_vt = if automatic {
+                source.source_vartype.is_some_and(is_supported_scalar_vartype)
+            } else {
+                source.source_vartype.is_none_or(|vt| vt == expected_source_vt)
+                    && (binding.source_conversion.is_none() || source.source_vartype == Some(expected_source_vt))
+            };
             if source.source_data_type != binding.source_data_type
                 || source.source_conversion != binding.source_conversion
-                || source.source_vartype.is_some_and(|vt| vt != expected_source_vt)
+                || !valid_source_vt
                 || source.published_vartype.is_some_and(|vt| vt != expected_published_vt)
-                || (binding.source_conversion.is_some() && source.source_vartype != Some(expected_source_vt))
                 || (binding.source_conversion.is_some() && source.published_vartype != Some(expected_published_vt)) {
                 return Err("VARTYPE de origem incompatível".into());
             }
@@ -648,7 +698,7 @@ mod tests {
         let mut project = example();
         project.deployment = Some(Deployment { machine_id: "destination-a".into(), configuration_revision: 11 });
         project.connections[0].modules[0].variables[0].source = Some(SourceBinding {
-            module_id: "origin-a".into(), item_id: "Channel_0_User_Defined.Ramp.Ramp_Float".into(),
+            module_id: "origin-a".into(), item_id: "ExampleChannel.Device.Ramp".into(),
             stale_after_s: 30, source_data_type: Some(SourceDataType::Float),
             source_conversion: Some(SourceConversion::FloatToDouble),
         });
@@ -659,7 +709,7 @@ mod tests {
         let session = runtime.start_source_session("origin-a");
         let converted = SourceSample {
             item_id: "Processo.Nivel".into(),
-            source_item_id: "Channel_0_User_Defined.Ramp.Ramp_Float".into(),
+            source_item_id: "ExampleChannel.Device.Ramp".into(),
             data_type: DataType::Double,
             value: Some(SimValue::Double(61.75)), quality: 0xc0,
             source_timestamp_filetime: Some(12345678), hresult: 0,
@@ -1030,6 +1080,90 @@ mod tests {
 
         std::fs::remove_file(path).unwrap();
     }
+    fn four_type_project() -> Project {
+        serde_json::from_value(serde_json::json!({
+            "schema_version":1,"name":"Four types","diagnostic_port":49326,
+            "connections":[{"name":"Laboratory","modules":[{"name":"Types","variables":[
+                {"name":"Real","data_type":"Double","initial_value":7},
+                {"name":"Integer","data_type":"Integer","initial_value":-2147483648i64},
+                {"name":"Text","data_type":"String","initial_value":"Ação 🚀\u{0}fim"},
+                {"name":"Boolean","data_type":"Boolean","initial_value":false}
+            ]}]}]
+        })).unwrap()
+    }
+
+    #[test]
+    fn four_output_types_normalize_json_numbers_without_truncation() {
+        let project = four_type_project();
+        project.validate().unwrap();
+        let mut runtime = ProjectRuntime::new(project).unwrap();
+        runtime.tick(Some(12345678));
+        for (id, kind, expected) in [
+            ("Types.Real", DataType::Double, SimValue::Double(7.0)),
+            ("Types.Integer", DataType::Integer, SimValue::Integer(i32::MIN)),
+            ("Types.Text", DataType::String, SimValue::String("Ação 🚀\u{0}fim".into())),
+            ("Types.Boolean", DataType::Boolean, SimValue::Boolean(false)),
+        ] {
+            let sample=runtime.sample(id).unwrap();
+            assert_eq!(sample.data_type, kind);assert_eq!(sample.value, Some(expected));
+            assert_eq!(sample.quality,192);assert_eq!(sample.source_timestamp_filetime,Some(12345678));
+        }
+        assert_eq!(DataType::Integer.vartype(),3);assert_eq!(DataType::String.vartype(),8);
+        assert!(SimValue::Double(1.25).for_type(DataType::Integer).is_none());
+        assert!(SimValue::Double(2147483648.0).for_type(DataType::Integer).is_none());
+        assert!(SimValue::Double(-2147483649.0).for_type(DataType::Integer).is_none());
+        assert!(SimValue::Boolean(true).for_type(DataType::Integer).is_none());
+        assert!(SimValue::String("7".into()).for_type(DataType::Integer).is_none());
+        assert!(SimValue::Double(f64::INFINITY).for_type(DataType::Double).is_none());
+    }
+
+    #[test]
+    fn string_limit_counts_utf16_units_and_keeps_unicode_and_embedded_nul() {
+        assert!(SimValue::String("🚀".repeat(2048)).for_type(DataType::String).is_some());
+        assert!(SimValue::String("🚀".repeat(2049)).for_type(DataType::String).is_none());
+        assert!(SimValue::String("a".repeat(4097)).for_type(DataType::String).is_none());
+        let mut project=four_type_project();
+        project.connections[0].modules[0].variables[2].initial_value=SimValue::String("🚀".repeat(2049));
+        assert!(project.validate().is_err());
+    }
+
+    #[test]
+    fn automatic_four_type_batches_are_atomic_and_validate_variant_evidence() {
+        let mut project=four_type_project();
+        for variable in &mut project.connections[0].modules[0].variables {
+            variable.source=Some(SourceBinding{module_id:"source".into(),item_id:variable.name.clone(),
+                stale_after_s:30,source_data_type:Some(SourceDataType::Auto),source_conversion:Some(SourceConversion::Automatic)});
+        }
+        let mut runtime=ProjectRuntime::new(project).unwrap();
+        let session=runtime.start_source_session("source");
+        let incoming:Vec<SourceSample>=serde_json::from_value(serde_json::json!([
+            {"item_id":"Types.Real","source_item_id":"Real","data_type":"Double","value":7,"quality":192,"hresult":0,"source_timestamp_filetime":12345678,"source_vartype":4,"published_vartype":5,"source_data_type":"Auto","source_conversion":"automatic"},
+            {"item_id":"Types.Integer","source_item_id":"Integer","data_type":"Integer","value":42,"quality":192,"hresult":0,"source_timestamp_filetime":12345678,"source_vartype":2,"published_vartype":3,"source_data_type":"Auto","source_conversion":"automatic"},
+            {"item_id":"Types.Text","source_item_id":"Text","data_type":"String","value":"Ação 🚀\u{0}fim","quality":64,"hresult":0,"source_timestamp_filetime":12345678,"source_vartype":8,"published_vartype":8,"source_data_type":"Auto","source_conversion":"automatic"},
+            {"item_id":"Types.Boolean","source_item_id":"Boolean","data_type":"Boolean","value":true,"quality":192,"hresult":0,"source_timestamp_filetime":12345678,"source_vartype":11,"published_vartype":11,"source_data_type":"Auto","source_conversion":"automatic"}
+        ])).unwrap();
+        runtime.apply_source_samples("source",session,1,incoming.clone()).unwrap();
+        assert_eq!(runtime.sample("Types.Real").unwrap().value,Some(SimValue::Double(7.0)));
+        assert_eq!(runtime.sample("Types.Integer").unwrap().value,Some(SimValue::Integer(42)));
+        assert_eq!(runtime.sample("Types.Text").unwrap().quality,64);
+        let before=runtime.snapshot().samples;
+        for (index, variant) in [(0,0x2004),(1,7),(2,0),(3,10)] {
+            let mut bad=incoming.clone();bad[index].source_vartype=Some(variant);
+            assert!(runtime.apply_source_samples("source",session,2,bad).is_err());
+            assert_eq!(runtime.snapshot().samples,before);
+        }
+        let mut wrong=incoming.clone();wrong[2].published_vartype=Some(3);
+        assert!(runtime.apply_source_samples("source",session,2,wrong).is_err());
+        let mut wrong=incoming.clone();wrong[1].value=Some(SimValue::Double(42.5));
+        assert!(runtime.apply_source_samples("source",session,2,wrong).is_err());
+        assert_eq!(runtime.snapshot().samples,before);
+        let mut failed=incoming.clone();failed[1].hresult=0xc0040004u32 as i32;failed[1].quality=0;failed[1].value=None;
+        runtime.apply_source_samples("source",session,2,failed).unwrap();
+        let retained=runtime.sample("Types.Integer").unwrap();assert_eq!(retained.value,Some(SimValue::Integer(42)));assert_eq!(retained.quality,0);
+        runtime.apply_source_samples("source",session,3,incoming).unwrap();
+        assert_eq!(runtime.sample("Types.Integer").unwrap().quality,192);
+    }
+
 }
 
 /// Windows 7 native SHA-256 provider; no bundled crypto implementation.
@@ -1066,6 +1200,7 @@ pub fn sha256(bytes: &[u8]) -> Result<String, String> {
         })();
         BCryptCloseAlgorithmProvider(algorithm, 0); result
     }
+
 }
 #[cfg(not(windows))]
 pub fn sha256(_: &[u8]) -> Result<String, String> { Err("SHA256 requires Windows BCrypt".into()) }

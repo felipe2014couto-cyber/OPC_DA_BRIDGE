@@ -458,7 +458,7 @@ class Deployments:
                               "source_conversion": raw.get("source_conversion", variable.get("source_conversion")), "value": raw["value"],
                               "quality": "Good" if code & 192 == 192 else "Uncertain" if code & 192 == 64 else "Bad", "quality_code": code,
                               "source_timestamp": timestamp, "source_timestamp_filetime": ticks, "hresult": raw.get("hresult", 0),
-                              "source_vartype": raw.get("source_vartype"), "published_vartype": raw.get("published_vartype", 11 if raw["data_type"] == "Boolean" else 5),
+                              "source_vartype": raw.get("source_vartype"), "published_vartype": raw.get("published_vartype", {"Boolean": 11, "Double": 5, "Integer": 3, "String": 8}[raw["data_type"]]),
                               "source_kind": "opc_da" if raw.get("source_module_id") else "simulated",
                               "origin": "Agente Windows — OPC DA real" if raw.get("source_module_id") else "Agente Windows — fonte simulada",
                               "applied_to_windows": True, "server_pid": snapshot["pid"]}

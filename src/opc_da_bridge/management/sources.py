@@ -20,6 +20,7 @@ from pathlib import Path
 
 from .deployment import AgentError, RuntimeNotRunning, SshLabChannel, encoded
 from .store import ManagementError, _valid_host, utc_now
+from .opc_types import OUTPUT_VARTYPES, SOURCE_VARTYPES, AUTO_SOURCE_VARTYPES, valid_scalar
 
 
 class SourceError(AgentError):
@@ -76,16 +77,7 @@ class SshSourceChannel(SshLabChannel):
 
 
 class Sources:
-    LAB_SNAPSHOT_PROGID = "RustDaBridge.Lab.1"
-    LAB_SNAPSHOT_CLSID = "{7A2F45B1-64D3-4E8C-9A11-3C852B7F2140}"
-    LAB_SNAPSHOT_HOST = "10.247.140.166"
-    LAB_SNAPSHOT_HOSTNAME = "RB1PI2"
-    LAB_SNAPSHOT_AGENT_DIR = r"D:\OPCB\rust-da-source-agent-20261106-discovery-build4"
-    LAB_SNAPSHOT_ITEMS = {
-        "RB1PI1.TESTE.TESTE1.TESTE2": "Double",
-        "RB1PI1.TESTE.TESTE1.DIGITAL": "Boolean",
-    }
-    OPC_VARTYPES = {"Boolean": 11, "Double": 5, "Float": 4}
+    OPC_VARTYPES = SOURCE_VARTYPES
 
     def __init__(self, store, deployments, channel=None):
         self.store, self.deployments = store, deployments
@@ -228,7 +220,7 @@ class Sources:
         state, machine = self.deployments.machine(machine_id)
         views = [dict(origins.get(m["id"], {"status": "idle", "message": "Coleta ainda não confirmada."}), module_id=m["id"])
                  for m in machine["modules"] if m.get("source_kind") == "opc_da"]
-        priority = {"connected": 0, "idle": 1, "waiting": 1, "degraded": 2, "unavailable": 3}
+        priority = {"connected": 0, "idle": 1, "waiting": 1, "paused": 2, "degraded": 2, "unavailable": 3}
         status = max((v["status"] for v in views), key=lambda s: priority[s], default="idle")
         return {"status": status, "message": " · ".join(v["message"] for v in views) or "Nenhuma origem OPC DA configurada.", "origins": views}
 
@@ -240,16 +232,17 @@ class Sources:
                 or not isinstance(profile.get("machine_id"), str)
                 or not isinstance(profile.get("source_host"), str)
                 or not _valid_host(profile["source_host"])
-                or profile["source_host"] != self.LAB_SNAPSHOT_HOST
-                or profile.get("prog_id") != self.LAB_SNAPSHOT_PROGID
-                or profile.get("clsid", "").casefold() != self.LAB_SNAPSHOT_CLSID.casefold()):
+                or not isinstance(profile.get("prog_id"), str)
+                or not re.fullmatch(r"[A-Za-z0-9_. -]{1,200}", profile["prog_id"])
+                or not isinstance(profile.get("clsid"), str)
+                or not re.fullmatch(r"\{[0-9A-Fa-f-]{36}\}", profile["clsid"])):
             raise ManagementError("Identidade do perfil de snapshot não autorizada.")
         interval = profile.get("interval_s")
         if isinstance(interval, bool) or not isinstance(interval, int) or not 5 <= interval <= 3600:
             raise ManagementError("Intervalo do snapshot deve ser de 5 a 3600 segundos.")
         bindings = profile.get("bindings")
-        if not isinstance(bindings, list) or not 1 <= len(bindings) <= len(self.LAB_SNAPSHOT_ITEMS):
-            raise ManagementError("O perfil de laboratório aceita apenas as duas tags autorizadas.")
+        if not isinstance(bindings, list) or not 1 <= len(bindings) <= 128:
+            raise ManagementError("O perfil de laboratório aceita entre 1 e 128 vínculos.")
         seen_variables, seen_items, seen_sources = set(), set(), set()
         for binding in bindings:
             if not isinstance(binding, dict):
@@ -258,11 +251,11 @@ class Sources:
             published_id = binding.get("published_item_id")
             source_id = binding.get("source_item_id")
             data_type = binding.get("data_type")
+            valid_type = data_type in ("Boolean", "Double")
+            valid_published = isinstance(published_id, str) and 1 <= len(published_id) <= 512
+            valid_source = isinstance(source_id, str) and 1 <= len(source_id) <= 512
             if (not isinstance(variable_id, str) or not re.fullmatch(r"[0-9a-f-]{36}", variable_id, re.I)
-                    or published_id not in self.LAB_SNAPSHOT_ITEMS
-                    or source_id not in self.LAB_SNAPSHOT_ITEMS
-                    or self.LAB_SNAPSHOT_ITEMS[source_id] != data_type
-                    or data_type != self.LAB_SNAPSHOT_ITEMS[published_id]
+                    or not valid_published or not valid_source or not valid_type
                     or source_id != published_id
                     or variable_id in seen_variables or published_id in seen_items or source_id in seen_sources):
                 raise ManagementError("Item ID, tipo ou associação do snapshot não autorizado.")
@@ -277,8 +270,8 @@ class Sources:
         state = self.store.state(False)
         machine = next((m for c in state["connections"] for m in c["machines"]
                         if m["id"] == profile["machine_id"]), None)
-        if machine is None:
-            raise ManagementError("Máquina do perfil de snapshot não existe na configuração persistente.")
+        if machine is None or machine["host"] != profile["source_host"]:
+            raise ManagementError("Máquina do perfil de snapshot não corresponde ao endereço persistente configurado.")
         variables = {v["id"]: (m, v) for c in state["connections"] for m in c["machines"]
                      for module in m["modules"] for folder in module["folders"] for v in folder["variables"]}
         for binding in profile["bindings"]:
@@ -289,18 +282,35 @@ class Sources:
                 raise ManagementError("Vínculo snapshot não corresponde à configuração persistente; Item IDs preservados.")
         target = self.provision(profile["source_host"], "rust_lab_loopback_snapshot")
         lab = target.get("lab_snapshot") or {}
+        configured_items = lab.get("items", [])
+        if not isinstance(configured_items, list):
+            raise ManagementError("Allowlist privada de itens do snapshot inválida.")
+        allowed = {}
+        for item in configured_items:
+            if (not isinstance(item, dict) or not isinstance(item.get("source_item_id"), str)
+                    or not 1 <= len(item["source_item_id"]) <= 512
+                    or item.get("data_type") not in ("Boolean", "Double")
+                    or item["source_item_id"] in allowed):
+                raise ManagementError("Allowlist privada de itens do snapshot inválida.")
+            allowed[item["source_item_id"]] = item["data_type"]
+        expected_host = target.get("expected_hostname")
+        expected_address = target.get("expected_address", target.get("host"))
+        expected_architecture = target.get("expected_process_architecture")
+        port = lab.get("port")
         if (target.get("read_transport") != "rust_lab_loopback_snapshot"
                 or lab.get("enabled") is not True
                 or lab.get("prog_id") != profile["prog_id"]
-                or lab.get("port") != 49321
                 or str(lab.get("clsid", "")).casefold() != profile["clsid"].casefold()
-                or target.get("expected_hostname", "").casefold() != self.LAB_SNAPSHOT_HOSTNAME.casefold()
-                or target.get("expected_address") != self.LAB_SNAPSHOT_HOST
-                or target.get("expected_process_architecture") != 32
-                or target.get("agent_dir") != self.LAB_SNAPSHOT_AGENT_DIR):
+                or not isinstance(expected_host, str) or not expected_host
+                or not isinstance(expected_address, str) or expected_address != profile["source_host"]
+                or (expected_architecture is not None and expected_architecture not in (32, 64))
+                or not isinstance(target.get("agent_dir"), str) or not target["agent_dir"]
+                or isinstance(port, bool) or not isinstance(port, int) or not 1 <= port <= 65535):
             raise ManagementError("Agente provisionado não corresponde ao servidor Rust DA de laboratório autorizado.")
-        allowed = {x.get("source_item_id"): x.get("data_type") for x in lab.get("items", []) if isinstance(x, dict)}
-        if allowed != self.LAB_SNAPSHOT_ITEMS or not {b["source_item_id"] for b in profile["bindings"]}.issubset(allowed):
+        if (not allowed or profile.get("source_host") != target.get("host")
+                or profile.get("prog_id") != target.get("lab_snapshot", {}).get("prog_id")
+                or not {b["source_item_id"] for b in profile["bindings"]}.issubset(allowed)
+                or any(allowed[b["source_item_id"]] != b["data_type"] for b in profile["bindings"])):
             raise ManagementError("Perfil inclui Item IDs ausentes da allowlist do agente.")
         self.dashboard_profile = profile
         return profile
@@ -327,7 +337,7 @@ class Sources:
                 "applied_to_windows": False}
 
     def _invalid_profile_samples(self, variables):
-        """Fail closed for this lab's IDs if a present sidecar is malformed on first start."""
+        """Fail closed for IDs explicitly bound by a malformed local sidecar."""
         if not self.dashboard_config_path.exists():
             return {}
         try:
@@ -335,23 +345,30 @@ class Sources:
             machine_id = raw.get("machine_id") if isinstance(raw, dict) else None
             state = self.store.state(False)
             machine = next((m for c in state["connections"] for m in c["machines"]
-                            if m["id"] == machine_id and m["host"] == self.LAB_SNAPSHOT_HOST), None)
+                            if m["id"] == machine_id), None)
             if machine is None:
                 return {}
         except (OSError, ValueError, TypeError, KeyError):
+            return {}
+        raw_bindings = raw.get("bindings", [])
+        if not isinstance(raw_bindings, list):
             return {}
         machine_variables = {v["id"] for module in machine["modules"] for folder in module["folders"]
                              for v in folder["variables"]}
         opc_da_variables = {v["id"] for module in machine["modules"] if module.get("source_kind") == "opc_da"
                             for folder in module["folders"] for v in folder["variables"]}
+        bindings = {b.get("variable_id"): b for b in raw_bindings
+                    if isinstance(b, dict) and isinstance(b.get("variable_id"), str)}
         output = {}
         for variable in variables:
-            expected_type = self.LAB_SNAPSHOT_ITEMS.get(variable.get("item_id"))
-            if (variable.get("id") in opc_da_variables or variable.get("id") not in machine_variables or expected_type is None
-                    or variable.get("data_type") != expected_type):
+            binding = bindings.get(variable.get("id"))
+            if (variable.get("id") in opc_da_variables or variable.get("id") not in machine_variables
+                    or not binding or binding.get("published_item_id") != variable.get("item_id")
+                    or binding.get("data_type") != variable.get("data_type")
+                    or binding.get("data_type") not in ("Boolean", "Double")):
                 continue
             binding = {"variable_id": variable["id"], "published_item_id": variable["item_id"],
-                       "source_item_id": variable["item_id"], "data_type": expected_type}
+                       "source_item_id": variable["item_id"], "data_type": variable["data_type"]}
             sample = self._bad_dashboard_sample(binding,
                 "Perfil persistente de snapshot inválido; nenhum cache anterior será apresentado como atual.")
             sample["snapshot_status"] = "invalid"
@@ -593,12 +610,13 @@ class Sources:
                             if module.get("source_kind") != "opc_da": continue
                             key = (machine["id"], module["id"])
                             if time.monotonic() < self.next_poll.get(key, 0): continue
+                            interval = self._collection_interval(machine["id"], module)
                             started = time.monotonic()
-                            self.next_poll[key] = started + module["update_interval_s"]
+                            self.next_poll[key] = started + interval
                             if self.deployments.status(machine)["status"] == "applied":
                                 self.poll_once(machine, module, state)
                                 with self.lock: status = self.states.get(machine["id"], {}).get(module["id"], {}).get("status")
-                                self._schedule_poll(key, status, started, module["update_interval_s"])
+                                self._schedule_poll(key, status, started, interval)
                 now = time.monotonic()
                 if now >= self.dashboard_next_poll:
                     # Let the poller own profile validation and failure handling. Reading
@@ -654,7 +672,8 @@ class Sources:
             conversion = variable.get("source_conversion")
             expected_source_vt = self.OPC_VARTYPES.get(source_type)
             expected_published_vt = self.OPC_VARTYPES[target_type]
-            if expected_source_vt is None:
+            automatic = source_type == "Auto" and conversion == "automatic"
+            if expected_source_vt is None and not automatic:
                 raise SourceError("Tipo de origem não permitido.", transport=transport, error_code="source_type_invalid")
             hresult = raw.get("hresult", 0)
             if isinstance(hresult, bool) or not isinstance(hresult, int) or not -2147483648 <= hresult <= 2147483647:
@@ -665,13 +684,14 @@ class Sources:
                 raise SourceError("Metadados de tipo/conversão divergem do vínculo.", transport=transport,
                                   error_code="source_conversion_mismatch")
             if hresult >= 0:
-                if raw.get("source_vartype") != expected_source_vt or raw.get("published_vartype", expected_published_vt) != expected_published_vt:
+                observed_vt = raw.get("source_vartype")
+                source_matches = (type(observed_vt) is int and observed_vt in AUTO_SOURCE_VARTYPES) if automatic else observed_vt == expected_source_vt
+                if (not source_matches or (automatic and "published_vartype" not in raw)
+                        or raw.get("published_vartype", expected_published_vt) != expected_published_vt):
                     raise SourceError("VARTYPE retornado diverge do tipo de origem/publicação.", transport=transport,
                                       error_code="source_vartype_mismatch")
                 value = raw.get("value")
-                valid_value = (isinstance(value, bool) if target_type == "Boolean" else
-                               isinstance(value, (int, float)) and not isinstance(value, bool) and math.isfinite(value))
-                if not valid_value:
+                if not valid_scalar(target_type, value):
                     raise SourceError("Valor OPC DA inválido para o tipo publicado.", transport=transport,
                                       error_code="source_value_invalid")
                 if conversion == "float_to_double":
@@ -699,8 +719,63 @@ class Sources:
     def poll_once(self, machine, module, state):
         with self.relay_lock: self._poll_once(machine, module, state)
 
+    def _collection_interval(self, machine_id, module):
+        """A collection permission may slow down, never accelerate, the module."""
+        interval = module["update_interval_s"]
+        try:
+            config = json.loads((self.store.directory / "relay-read-windows.json").read_text())
+            entry = config["windows"][module["id"]]
+            limit = entry.get("interval_s", 10)
+            if (entry["machine_id"] == machine_id and entry.get("mode") == "continuous"
+                    and type(limit) is int and 1 <= limit <= 3600):
+                return max(interval, limit)
+        except (OSError, ValueError, TypeError, KeyError, AttributeError):
+            pass  # _read_window independently refuses malformed permissions.
+        return interval
+
+    def _read_window(self, machine_id, module_id):
+        """Operator-owned collection permission; never modifies the DA catalog."""
+        path = self.store.directory / "relay-read-windows.json"
+        if not path.exists():
+            return True, None
+        try:
+            if path.stat().st_size > 65536:
+                raise ValueError()
+            config = json.loads(path.read_text())
+            if config.get("schema_version") != 1 or not isinstance(config.get("windows"), dict):
+                raise ValueError()
+            entry = config["windows"].get(module_id)
+            if entry is None:
+                return True, None
+            if entry["machine_id"] != machine_id:
+                raise ValueError()
+            mode = entry.get("mode", "bounded")
+            if mode == "continuous":
+                interval = entry.get("interval_s", 10)
+                if (type(entry.get("enabled")) is not bool or type(interval) is not int
+                        or not 1 <= interval <= 3600):
+                    raise ValueError()
+                return entry["enabled"], "real_read_only"
+            if mode != "bounded":
+                raise ValueError()
+            start, end = entry["not_before_unix_ms"], entry["until_unix_ms"]
+            if (type(start) is not int or type(end) is not int
+                    or not 0 <= end - start <= 300000):
+                raise ValueError()
+            now = time.time() * 1000
+            return start <= now < end, "real_read_only"
+        except (OSError, ValueError, TypeError, KeyError, AttributeError):
+            # A malformed operator control must not authorize additional reads.
+            return False, None
+
     def _poll_once(self, machine, module, state):
         mid = machine["id"]
+        permitted, environment = self._read_window(mid, module["id"])
+        if not permitted:
+            self._state(mid, module["id"], "paused",
+                        "Coleta pausada: janela de leitura fechada; o cache de destino expira no prazo configurado.",
+                        {}, source_environment=environment)
+            return
         started = time.monotonic()
         timings = {}
         transport = None
@@ -746,6 +821,11 @@ class Sources:
                             "source_timestamp_filetime": None} for item in request["items"]]
             timings["source_read"] = round((time.monotonic() - read_started) * 1000, 1)
             if self.stop.is_set(): return
+            if not self._read_window(mid, module["id"])[0]:
+                self._state(mid, module["id"], "paused",
+                            "Janela encerrada durante a leitura; amostra não encaminhada, aguardando expiração do cache.",
+                            {}, source_environment=environment)
+                return
             session[1] += 1
             delivery_started = time.monotonic()
             ack = self.deployments.channel.runtime(destination, {**header, "operation": "source-samples", "session_id": session[0],
@@ -765,7 +845,7 @@ class Sources:
             else:
                 message = "Leitura OPC DA confirmada pelo destino."
             self._state(mid, module["id"], status, message, ack, transport=transport,
-                        source_environment=target.get("source_environment"),
+                        source_environment=environment or target.get("source_environment"),
                         read_method=(reply.get("read_method") or next(
                             (sample.get("read_method") for sample in samples if sample.get("read_method")), None)) if not error else None,
                         source_pid=reply.get("source_pid") if not error else None,

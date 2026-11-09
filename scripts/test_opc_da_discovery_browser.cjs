@@ -16,9 +16,10 @@ class Fake:
   return {'ok':True,'identity':{'hostname':'SOURCE-LAB','addresses':[host],'registry_view':'32-bit'},'servers':[{'prog_id':'Lab.Source.%d'%n,'clsid':'{11111111-2222-3333-4444-555555555555}','registry_view':'32-bit'} for n in range(0 if host=='empty.invalid' else 2)]}
 s=make_server(sys.argv[1],port=0)
 s.sources.channel=Fake()
-def provision(host):
+def provision(host,transport=None,prog_id=None):
  if host not in ('empty.invalid','source.invalid','error.invalid'): raise AgentError('Não provisionada')
- return {'host':host,'expected_hostname':'SOURCE-LAB','enabled':True}
+ if transport not in (None,'opc_da_automation'): raise AgentError('Transporte não provisionado')
+ return {'host':host,'expected_hostname':'SOURCE-LAB','enabled':True,'read_transport':'opc_da_automation'}
 s.sources.provision=provision
 print(s.server_port,flush=True)
 try:s.serve_forever()
@@ -55,9 +56,20 @@ let backend,browser;
  assert.equal(await test('field-initial_value').isVisible(),false);await save();
  state=await api('state');const variable=state.connections[0].machines[0].modules[0].folders[0].variables[0];
  assert.equal(variable.source_id,'Source.Exact:Level');assert.equal(variable.item_id,'Destination.Level');
+ assert.equal(variable.source_data_type,'Auto');assert.equal(variable.source_conversion,'automatic');
+ for(const [type,name,initial] of [['Integer','Counter',0],['String','Text',''],['Boolean','Digital',false]]){
+  await test('new-variable').click();await field('name',name);await field('data_type',type);
+  await field('item_id','Destination.'+name);await field('source_id','Source.Exact:'+name);
+  assert.equal(await test('field-source_conversion').inputValue(),'automatic');
+  assert.equal(await test('field-initial_value').isVisible(),false);await save();
+  const saved=(await api('state')).connections[0].machines[0].modules[0].folders[0].variables.find(v=>v.name===name);
+  assert.equal(saved.data_type,type);assert.equal(saved.initial_value,initial);
+  assert.equal(saved.source_data_type,'Auto');assert.equal(saved.source_conversion,'automatic');
+ }
+ state=await api('state');
  await test('variable-row-'+variable.id).dblclick();await page.locator('#notice').filter({hasText:/exige aplicação|pendente|falhou/}).waitFor();
  assert.equal((await api('state')).revision,state.revision);
  assert.deepEqual(errors,[]);
- console.log('OPC_DA_DISCOVERY_BROWSER_PASS empty multiple explicit_selection error_preserves_form distinct_ids no_simulation_fallback');
+ console.log('OPC_DA_DISCOVERY_BROWSER_PASS empty multiple explicit_selection error_preserves_form distinct_ids no_simulation_fallback four_types auto_conversion real_scope_save');
  console.log('ARTIFACT_DIRECTORY='+dir);
 })().catch(e=>{console.error(e);process.exitCode=1;}).finally(async()=>{if(browser)await browser.close();if(backend)backend.kill('SIGINT');});

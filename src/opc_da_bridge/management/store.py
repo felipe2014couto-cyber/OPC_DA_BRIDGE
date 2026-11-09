@@ -14,6 +14,8 @@ import uuid
 from pathlib import Path
 from urllib.parse import urlsplit
 
+from .opc_types import OUTPUT_VARTYPES, valid_scalar
+
 
 KINDS = ("connections", "machines", "modules", "folders", "variables")
 PARENT = dict(zip(KINDS, ("root", "connections", "machines", "modules", "folders")))
@@ -203,19 +205,10 @@ class Store:
         elif kind == "variables":
             data_type = data.get("data_type")
             value = data.get("initial_value")
-            if data_type not in ("Boolean", "Double"):
-                raise ManagementError("Tipo deve ser Boolean ou Double.")
-            if data_type == "Boolean":
-                if not isinstance(value, bool):
-                    raise ManagementError("O valor inicial Boolean deve ser true ou false.")
-            else:
-                try:
-                    valid_number = (not isinstance(value, bool) and isinstance(value, (int, float))
-                                    and math.isfinite(value))
-                except OverflowError:
-                    valid_number = False
-                if not valid_number:
-                    raise ManagementError("O valor inicial Double deve ser um número finito.")
+            if data_type not in OUTPUT_VARTYPES:
+                raise ManagementError("Tipo deve ser Real/Double, Integer, String ou Boolean.")
+            if not valid_scalar(data_type, value):
+                raise ManagementError("Valor inicial incompatível: use número finito para Real, inteiro de 32 bits, texto de até 4096 unidades UTF-16 ou true/false para Boolean.")
             if data_type == "Double":
                 value = float(value)
             folder = self._node("folders", parent_id)
@@ -224,12 +217,15 @@ class Store:
             source_data_type = data.get("source_data_type")
             source_conversion = data.get("source_conversion")
             if source_data_type is not None or source_conversion is not None:
-                if (module["payload"] and _strict_json(module["payload"]).get("source_kind") == "opc_da"
+                opc_da = _strict_json(module["payload"]).get("source_kind") == "opc_da"
+                if opc_da and source_data_type == "Auto" and source_conversion == "automatic":
+                    result.update(source_data_type="Auto", source_conversion="automatic")
+                elif (opc_da
                         and data_type == "Double" and source_data_type == "Float"
                         and source_conversion == "float_to_double"):
                     result.update(source_data_type="Float", source_conversion="float_to_double")
                 else:
-                    raise ManagementError("Conversão permitida nesta etapa: OPC DA Float (VT_R4) para publicado Double (VT_R8).")
+                    raise ManagementError("Use conversão automática OPC DA ou Float (VT_R4) para Real/Double (VT_R8).")
             proposed = data.get("item_id")
             if proposed is None:
                 names = [_strict_json(r["payload"])["name"] for r in (machine, module, folder)] + [result["name"]]

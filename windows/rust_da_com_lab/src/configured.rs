@@ -101,6 +101,8 @@ fn kind(t: DataType) -> ValueType {
     match t {
         DataType::Boolean => ValueType::BOOL,
         DataType::Double => ValueType::F64,
+        DataType::Integer => ValueType::I32,
+        DataType::String => ValueType::STRING,
     }
 }
 
@@ -186,10 +188,7 @@ impl DaService for ConfiguredService {
                 .into_iter()
                 .map(|v| BrowseItem {
                     item_id: v.item_id,
-                    data_type: match v.variable.data_type {
-                        DataType::Boolean => 11,
-                        DataType::Double => 5,
-                    },
+                    data_type: v.variable.data_type.vartype(),
                     access_rights: 1,
                 })
                 .collect(),
@@ -479,10 +478,13 @@ fn sample_to_com(sample: Sample, client: u32) -> std::result::Result<ServerSampl
     // timestamp explicit and return a per-item failure across the COM boundary.
     let timestamp = sample.source_timestamp_filetime.filter(|t| *t > 0 && *t <= 2650467743999999999)
         .ok_or_else(|| hresult(0x80004005))?;
-    let value = match sample.value {
-        Some(SimValue::Double(v)) => Value::F64(v),
-        Some(SimValue::Boolean(v)) => Value::Bool(v),
-        None => return Err(hresult(0xc0040008)),
+    let value = sample.value.and_then(|v| v.for_type(sample.data_type))
+        .ok_or_else(|| hresult(0xc0040004))?;
+    let value = match value {
+        SimValue::Double(v) => Value::F64(v),
+        SimValue::Boolean(v) => Value::Bool(v),
+        SimValue::Integer(v) => Value::I32(v),
+        SimValue::String(v) => Value::String(v),
     };
     Ok(ServerSample {
         client_handle: ClientItemHandle(client),
@@ -932,9 +934,13 @@ pub fn client_test() -> Result<()> {
             let expected_value = if v.variable.source.is_some() {
                 current.samples.iter().find(|s| s.item_id==v.item_id).and_then(|s|s.value.clone()).ok_or_else(||Error::unexpected("source has no sample"))?
             } else { v.variable.initial_value.clone() };
+            let expected_value = expected_value.for_type(v.variable.data_type)
+                .ok_or_else(||Error::unexpected("expected value type is invalid"))?;
             let expected = match expected_value {
                 SimValue::Boolean(b) => Value::Bool(b),
                 SimValue::Double(d) => Value::F64(d),
+                SimValue::Integer(i) => Value::I32(i),
+                SimValue::String(s) => Value::String(s),
             };
             if sample.value != expected || sample.quality != 0xc0 || sample.timestamp.ticks() == 0 {
                 return Err(Error::unexpected(format!(
@@ -951,9 +957,12 @@ pub fn client_test() -> Result<()> {
         .zip(&published)
         .map(|(h, v)| WriteValue {
             server_handle: *h,
-            value: match v.variable.initial_value {
+            value: match v.variable.initial_value.clone().for_type(v.variable.data_type)
+                .expect("validated project value") {
                 SimValue::Boolean(b) => Value::Bool(b),
                 SimValue::Double(d) => Value::F64(d),
+                SimValue::Integer(i) => Value::I32(i),
+                SimValue::String(s) => Value::String(s),
             },
         })
         .collect();
@@ -999,6 +1008,39 @@ mod diagnostics_tests {
         assert_eq!(converted.timestamp.ticks(), 134387114304673403);
         assert_eq!(converted.quality, 64);
         assert_eq!(converted.client_handle.0, 501);
+    }
+
+    #[test]
+    fn com_projection_preserves_four_types_unicode_and_original_timestamp() {
+        for (kind, value, expected) in [
+            (DataType::Double,serde_json::json!(7),Value::F64(7.0)),
+            (DataType::Integer,serde_json::json!(-2147483648i64),Value::I32(i32::MIN)),
+            (DataType::String,serde_json::json!("Ação 🚀\u{0}fim"),Value::String("Ação 🚀\u{0}fim".into())),
+            (DataType::Boolean,serde_json::json!(false),Value::Bool(false)),
+        ] {
+            let sample:Sample=serde_json::from_value(serde_json::json!({
+                "item_id":"FourTypes.Value","data_type":kind,"value":value,
+                "quality":64,"hresult":0,"source_timestamp_filetime":134387114304673403u64
+            })).unwrap();
+            let projected=sample_to_com(sample,107).unwrap();
+            assert_eq!(projected.value,expected);assert_eq!(projected.timestamp.ticks(),134387114304673403);
+            assert_eq!(projected.quality,64);assert_eq!(projected.client_handle.0,107);
+        }
+        assert_eq!(kind(DataType::Integer),ValueType::I32);
+        assert_eq!(kind(DataType::String),ValueType::STRING);
+    }
+
+    #[test]
+    fn com_projection_rejects_invalid_integer_and_string_payloads() {
+        for (kind,value) in [(DataType::Integer,serde_json::json!(2.25)),
+            (DataType::Integer,serde_json::json!(2147483648i64)),
+            (DataType::String,serde_json::json!("🚀".repeat(2049)))] {
+            let sample:Sample=serde_json::from_value(serde_json::json!({
+                "item_id":"FourTypes.Value","data_type":kind,"value":value,
+                "quality":192,"hresult":0,"source_timestamp_filetime":134387114304673403u64
+            })).unwrap();
+            assert_eq!(sample_to_com(sample,107).unwrap_err().raw(),0xc0040004u32 as i32);
+        }
     }
 
     fn test_service() -> ConfiguredService {

@@ -24,11 +24,12 @@ if(!$modifier[1] -or !$modifier[2] -or !$modifier[3]){throw 'Read output paramet
 'POWERSHELL_VERSION='+$PSVersionTable.PSVersion.ToString()
 'SOURCE_COM_HELPERS_PASS reproduced_old_empty_return empty_collection populated_collection method_empty_array scalar byref_mask'
 
+. (Join-Path (Split-Path -Parent $SourceScript) 'opc_scalar_conversion.ps1')
 $typeFunction=@(Get-Content -LiteralPath $SourceScript | Where-Object {$_ -match '^function ObservedVariantType\('})
 if($typeFunction.Count -ne 1){throw 'Expected the observed VARIANT helper'}
 . ([ScriptBlock]::Create($typeFunction[0]))
 if((ObservedVariantType ([double]7)) -ne 5 -or (ObservedVariantType $false) -ne 11){throw 'Scalar VARIANT mapping changed'}
-if($null -ne (ObservedVariantType ([int]7)) -or $null -ne (ObservedVariantType '7') -or $null -ne (ObservedVariantType $null)){throw 'Unsupported value was coerced'}
+if((ObservedVariantType ([int]7)) -ne 3 -or (ObservedVariantType '7') -ne 8 -or $null -ne (ObservedVariantType $null)){throw 'Scalar type evidence was coerced'}
 'SOURCE_VARIANT_TYPE_PASS double boolean unsupported null'
 
 # Exercise the exact group helpers and CLR reference binder, without OPC.

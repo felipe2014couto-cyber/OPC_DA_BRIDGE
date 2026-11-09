@@ -1,0 +1,45 @@
+{
+  "schema_version": 1,
+  "name": "Isolated four-type OPC DA test",
+  "diagnostic_port": 49326,
+  "deployment": {
+    "machine_id": "hierarchy-isolated-lab",
+    "configuration_revision": 1
+  },
+  "connections": [
+    {
+      "name": "Isolated simulated source",
+      "modules": [
+        {
+          "name": "FourTypes",
+          "variables": [
+            {
+              "item_id": "FourTypes.Real",
+              "name": "Real",
+              "data_type": "Double",
+              "initial_value": 7
+            },
+            {
+              "item_id": "FourTypes.Integer",
+              "name": "Integer",
+              "data_type": "Integer",
+              "initial_value": -2147483648
+            },
+            {
+              "item_id": "FourTypes.String",
+              "name": "String",
+              "data_type": "String",
+              "initial_value": "Ação 🚀\u0000fim"
+            },
+            {
+              "item_id": "FourTypes.Boolean",
+              "name": "Boolean",
+              "data_type": "Boolean",
+              "initial_value": false
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}

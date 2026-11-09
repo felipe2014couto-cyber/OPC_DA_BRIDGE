@@ -14,6 +14,14 @@ from opc_da_bridge.management.server import make_server
 from opc_da_bridge.management.store import ConfigurationError, Store
 from opc_da_bridge.management.sources import Sources
 
+# Synthetic snapshot fixture values. Never use production or workstation identities in tests.
+SNAPSHOT_HOST = "snapshot.example.invalid"
+SNAPSHOT_PROGID = "Example.Cache.Server.1"
+SNAPSHOT_CLSID = "{11111111-2222-3333-4444-555555555555}"
+SNAPSHOT_AGENT_DIR = r"C:\Lab\Agent"
+SNAPSHOT_ITEMS = {"Example.Numeric": "Double", "Example.Boolean": "Boolean"}
+
+
 
 class Client:
     def __init__(self, server):
@@ -76,6 +84,20 @@ def hierarchy(client):
     return dict(zip(("connections", "machines", "modules", "folders", "variables"), (connection, machine, module, folder, variable)))
 
 
+@pytest.mark.parametrize('kind,value', [('Double', 12.5), ('Integer', -2147483648),
+                                       ('String', 'Ação\x00🚀'), ('Boolean', False)])
+def test_four_scalar_types_persist_and_simulated_read_keeps_type(app, kind, value):
+    client, _ = app
+    nodes = hierarchy(client)
+    state = client.create('variables', {'parent_id': nodes['folders']['id'], 'name': 'NewType',
+                                       'data_type': kind, 'initial_value': value})
+    variable = next(v for v in state['connections'][0]['machines'][0]['modules'][0]['folders'][0]['variables']
+                    if v['name'] == 'NewType')
+    code, result, _ = client.call('GET', '/api/v1/variables/%s/read' % variable['id'])
+    assert code == 200 and result['sample']['value'] == value
+    assert result['sample']['data_type'] == kind and variable['read_only'] is True
+
+
 def test_http_full_hierarchy_create_edit_read_and_events(app):
     client, path = app
     assert client.state()["connections"] == []
@@ -114,7 +136,7 @@ def test_variable_can_move_within_same_machine_without_changing_identity(app):
     state = client.create("folders", {"parent_id": source_module["id"], "name": "Bindings"})
     source_folder = state["connections"][0]["machines"][0]["modules"][1]["folders"][0]
     status, response, _ = client.call("PATCH", "/api/v1/variables/" + initial_id,
-        {"parent_id": source_folder["id"], "source_id": "RustLab.Numeric.Double"}, client.state()["revision"])
+        {"parent_id": source_folder["id"], "source_id": "Example.Numeric.Double"}, client.state()["revision"])
     assert status == 200, response
     state = client.state()
     found = [(m, f, v) for connection in state["connections"] for machine in connection["machines"]
@@ -122,7 +144,7 @@ def test_variable_can_move_within_same_machine_without_changing_identity(app):
     assert len(found) == 1
     module, folder, variable = found[0]
     assert module["name"] == "Origem OPC DA" and folder["name"] == "Bindings"
-    assert variable["item_id"] == initial_item_id and variable["source_id"] == "RustLab.Numeric.Double"
+    assert variable["item_id"] == initial_item_id and variable["source_id"] == "Example.Numeric.Double"
 
     state = client.create("connections", {"name": "Outra máquina"})
     connection = state["connections"][-1]
@@ -142,45 +164,45 @@ def test_persistent_lab_snapshot_api_is_simulated_and_fails_closed(app):
     client, path = app
     state = client.create("connections", {"name": "Laboratório"})
     connection = state["connections"][0]
-    state = client.create("machines", {"parent_id": connection["id"], "name": "RB1PI1", "host": Sources.LAB_SNAPSHOT_HOST})
+    state = client.create("machines", {"parent_id": connection["id"], "name": "LabMachine", "host": SNAPSHOT_HOST})
     machine = state["connections"][0]["machines"][0]
     state = client.create("modules", {"parent_id": machine["id"], "name": "TESTE", "source_kind": "simulated"})
     module = state["connections"][0]["machines"][0]["modules"][0]
     state = client.create("folders", {"parent_id": module["id"], "name": "TESTE1"})
     folder = state["connections"][0]["machines"][0]["modules"][0]["folders"][0]
     state = client.create("variables", {"parent_id": folder["id"], "name": "TESTE2",
-        "item_id": "RB1PI1.TESTE.TESTE1.TESTE2", "source_id": "RB1PI1.TESTE.TESTE1.TESTE2",
+        "item_id": "Lab.Numeric", "source_id": "Lab.Numeric",
         "data_type": "Double", "initial_value": 28})
     number = state["connections"][0]["machines"][0]["modules"][0]["folders"][0]["variables"][0]
     state = client.create("variables", {"parent_id": folder["id"], "name": "DIGITAL",
-        "item_id": "RB1PI1.TESTE.TESTE1.DIGITAL", "source_id": "RB1PI1.TESTE.TESTE1.DIGITAL",
+        "item_id": "Lab.Boolean", "source_id": "Lab.Boolean",
         "data_type": "Boolean", "initial_value": True})
     variables = state["connections"][0]["machines"][0]["modules"][0]["folders"][0]["variables"]
     boolean = next(v for v in variables if v["name"] == "DIGITAL")
-    profile = {"schema_version": 1, "enabled": True, "profile_id": "rb1pi2-api-test",
-        "machine_id": machine["id"], "source_host": Sources.LAB_SNAPSHOT_HOST,
-        "prog_id": Sources.LAB_SNAPSHOT_PROGID, "clsid": Sources.LAB_SNAPSHOT_CLSID,
+    profile = {"schema_version": 1, "enabled": True, "profile_id": "snapshot-api-test",
+        "machine_id": machine["id"], "source_host": SNAPSHOT_HOST,
+        "prog_id": SNAPSHOT_PROGID, "clsid": SNAPSHOT_CLSID,
         "interval_s": 5, "bindings": [
             {"variable_id": number["id"], "published_item_id": number["item_id"], "source_item_id": number["source_id"], "data_type": "Double"},
             {"variable_id": boolean["id"], "published_item_id": boolean["item_id"], "source_item_id": boolean["source_id"], "data_type": "Boolean"}]}
     data_dir = path / "data"
     (data_dir / "lab-dashboard-snapshot.json").write_text(json.dumps(profile))
-    (data_dir / "source-agents.json").write_text(json.dumps({"sources": {Sources.LAB_SNAPSHOT_HOST: {
-        "host": Sources.LAB_SNAPSHOT_HOST, "expected_hostname": "RB1PI2", "expected_address": Sources.LAB_SNAPSHOT_HOST,
+    (data_dir / "source-agents.json").write_text(json.dumps({"sources": {SNAPSHOT_HOST: {
+        "host": SNAPSHOT_HOST, "expected_hostname": "snapshot-lab", "expected_address": SNAPSHOT_HOST,
         "expected_process_architecture": 32, "enabled": True, "read_transport": "rust_lab_loopback_snapshot",
-        "agent_dir": Sources.LAB_SNAPSHOT_AGENT_DIR,
-        "lab_snapshot": {"enabled": True, "prog_id": Sources.LAB_SNAPSHOT_PROGID,
-            "clsid": Sources.LAB_SNAPSHOT_CLSID, "port": 49321,
-            "items": [{"source_item_id": item, "data_type": Sources.LAB_SNAPSHOT_ITEMS[item]}
-                      for item in Sources.LAB_SNAPSHOT_ITEMS]}}}}))
+        "agent_dir": SNAPSHOT_AGENT_DIR,
+        "lab_snapshot": {"enabled": True, "prog_id": SNAPSHOT_PROGID,
+            "clsid": SNAPSHOT_CLSID, "port": 49321,
+            "items": [{"source_item_id": item, "data_type": SNAPSHOT_ITEMS[item]}
+                      for item in SNAPSHOT_ITEMS]}}}}))
 
     class FakeSnapshot:
         fail = False
         def request(self, target, request):
             if self.fail: raise RuntimeError("simulated relay outage")
-            return {"ok": True, "identity": {"hostname": "RB1PI2", "addresses": [target["host"]], "process_architecture": 32},
+            return {"ok": True, "identity": {"hostname": "snapshot-lab", "addresses": [target["host"]], "process_architecture": 32},
                 "transport": "rust_lab_loopback_snapshot", "read_method": "GET /v1/snapshot over SSH-local loopback",
-                "source_pid": 5780, "source_session": 2,
+                "source_pid": 2345, "source_session": 1,
                 "samples": [{**item, "value": False if item["data_type"] == "Boolean" else 7.0,
                     "quality": 192, "source_timestamp_filetime": 116444736000000000,
                     "source_vartype": 11 if item["data_type"] == "Boolean" else 5} for item in request["items"]]}
@@ -233,7 +255,7 @@ def test_validation_duplicate_scope_and_no_partial_updates(app):
         ("connections", {"name": "invalid\ud800"}, 400),
         ("connections", {"name": "Outro", "execute": "anything"}, 400),
         ("machines", {"parent_id": nodes["connections"]["id"], "name": "Outra", "host": "http://not-a-host/"}, 400),
-        ("machines", {"parent_id": nodes["connections"]["id"], "name": "Outra", "host": "999.999.999.999"}, 400),
+        ("machines", {"parent_id": nodes["connections"]["id"], "name": "Outra", "host": "not a host!"}, 400),
         ("modules", {"parent_id": nodes["machines"]["id"], "name": "Outro", "source_endpoint": "opc.tcp://user:password@example.invalid:4840/"}, 400),
         ("modules", {"parent_id": nodes["machines"]["id"], "name": "Outro", "source_endpoint": "opc.tcp://example.invalid/"}, 400),
         ("modules", {"parent_id": nodes["machines"]["id"], "name": "Outro", "source_endpoint": "opc.tcp://invalid!:4840/"}, 400),
