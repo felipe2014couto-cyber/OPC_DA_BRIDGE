@@ -20,8 +20,8 @@ def main():
     parser.add_argument('--data-dir', type=Path, required=True)
     parser.add_argument('--machine-id', required=True)
     parser.add_argument('--module-id', required=True)
-    parser.add_argument('--interval-s', type=int, default=10,
-                        help='minimum interval for continuous collection (default: 10)')
+    parser.add_argument('--interval-s', type=int, default=1,
+                        help='minimum interval for continuous collection (default: 1)')
     action = parser.add_mutually_exclusive_group(required=True)
     action.add_argument('--continuous', action='store_true')
     action.add_argument('--pause', action='store_true')

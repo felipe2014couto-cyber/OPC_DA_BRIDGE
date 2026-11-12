@@ -68,7 +68,8 @@ um coletor COM persistente otimizado para grandes cargas.
 O relay Linux inicia coleta apenas para máquinas com configuração aplicada
 confirmada, módulos OPC DA selecionados e agentes de origem provisionados.
 Há até 128 itens por módulo e até 7 KiB por pedido de leitura (limite da linha
-de comando no Windows; pedidos maiores devem ser divididos em módulos); intervalo padrão de 10 s, mínimo de 5 s. O intervalo
+de comando no Windows; pedidos maiores devem ser divididos em módulos); intervalo padrão de 1 s, mínimo de 1 s. Configurações
+já salvas mantêm seu intervalo explícito. O intervalo
 é a pausa entre ciclos completos; inclui-se também a latência das operações.
 Falhas recebem espera progressiva, limitada a 60 s. O relay atual percorre as
 origens serialmente: não houve ensaio de capacidade com muitas origens lentas.

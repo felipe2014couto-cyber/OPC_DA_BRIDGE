@@ -1,13 +1,14 @@
 # SPDX-License-Identifier: MIT
 # Local read-only OPC DA agent. No remote registry, registration, service or writes.
 # Windows PowerShell 2/.NET 2 compatible; process architecture must match Automation.
-param([string]$RequestBase64='', [switch]$Worker, [string]$ResultFile='')
+param([string]$RequestBase64='', [switch]$Worker, [string]$ResultFile='', [switch]$LibraryOnly)
 $ErrorActionPreference='Stop'
 [Console]::OutputEncoding=New-Object Text.UTF8Encoding($false)
 Add-Type -AssemblyName System.Web.Extensions
 $json=New-Object System.Web.Script.Serialization.JavaScriptSerializer
 $json.MaxJsonLength=1048576
 $root=Split-Path -Parent $MyInvocation.MyCommand.Path
+. (Join-Path $root 'opc_scalar_conversion.ps1')
 $utf8=New-Object Text.UTF8Encoding($false)
 function Encode($v){
  if($null -eq $v){return 'null'}
@@ -68,7 +69,7 @@ function Discover {
 # including empty OPCGroups/OPCItems; otherwise an empty collection becomes $null.
 function ComGet($object,[string]$name){$script:com_phase='get_'+$name;$base=$object.PSObject.BaseObject;return ,($base.GetType().InvokeMember($name,[Reflection.BindingFlags]::GetProperty,$null,$base,$null,[Globalization.CultureInfo]::InvariantCulture))}
 function ComCall($object,[string]$name,[object[]]$arguments){$script:com_phase='call_'+$name;$base=$object.PSObject.BaseObject;$clean=New-Object 'Object[]' $arguments.Count;for($i=0;$i -lt $arguments.Count;$i++){if($null -ne $arguments[$i]){$clean[$i]=$arguments[$i].PSObject.BaseObject}};return ,($base.GetType().InvokeMember($name,[Reflection.BindingFlags]::InvokeMethod,$null,$base,$clean,[Globalization.CultureInfo]::InvariantCulture))}
-function ObservedVariantType($value){if($value -is [bool]){return 11};if($value -is [double]){return 5};if($value -is [single]){return 4};return $null}
+function ObservedVariantType($value){return (BridgeObservedVariantType $value)}
 function ComInvokeReferences($object,[string]$name,[object[]]$values,[bool[]]$references){
  if($values.Count -ne $references.Count){throw 'reference_mask_mismatch'}
  $base=$object.PSObject.BaseObject
@@ -84,6 +85,9 @@ function SourceArrayFirst($array){
  return ,($array.GetValue($array.GetLowerBound(0)))
 }
 function ComGroupRead($group,$items,[string]$itemId,[int]$clientHandle){
+ if($script:keep_source_session -and $script:source_session -and $script:source_session['handles'].ContainsKey($itemId)){
+  $handles=[Array]::CreateInstance([int],[int[]]@(1),[int[]]@(1));$handles.SetValue([int]$script:source_session['handles'][$itemId],1)
+ }else{
  $ids=[Array]::CreateInstance([string],[int[]]@(1),[int[]]@(1));$ids.SetValue($itemId,1)
  $clients=[Array]::CreateInstance([int],[int[]]@(1),[int[]]@(1));$clients.SetValue($clientHandle,1)
  $argsAdd=New-Object 'Object[]' 5
@@ -91,16 +95,23 @@ function ComGroupRead($group,$items,[string]$itemId,[int]$clientHandle){
  $argsAdd[3]=[Array]::CreateInstance([int],[int[]]@(1),[int[]]@(1))
  $argsAdd[4]=[Array]::CreateInstance([int],[int[]]@(1),[int[]]@(1))
  $script:com_phase='group_AddItems'
+ $step=[Diagnostics.Stopwatch]::StartNew()
  $added=ComInvokeReferences $items 'AddItems' $argsAdd ([bool[]]@($false,$true,$true,$true,$true))
+ $script:source_add_ms+=$step.Elapsed.TotalMilliseconds
  $hr=[int](SourceArrayFirst $added[4])
  if($hr -lt 0){throw (New-Object Runtime.InteropServices.COMException -ArgumentList @('AddItems item failed',$hr))}
- $handles=$added[3];$script:last_source_handle=[int](SourceArrayFirst $handles)
+ $handles=$added[3]
+ if($script:keep_source_session -and $script:source_session){$script:source_session['handles'][$itemId]=[int](SourceArrayFirst $handles)}
+ }
+ $script:last_source_handle=[int](SourceArrayFirst $handles)
  $argsRead=New-Object 'Object[]' 7
  $argsRead[0]=[Int16]2;$argsRead[1]=[int]1;$argsRead[2]=$handles
  $argsRead[3]=[Array]::CreateInstance([object],[int[]]@(1),[int[]]@(1))
  $argsRead[4]=[Array]::CreateInstance([int],[int[]]@(1),[int[]]@(1))
  $script:com_phase='group_SyncRead'
+ $step=[Diagnostics.Stopwatch]::StartNew()
  $read=ComInvokeReferences $group 'SyncRead' $argsRead ([bool[]]@($false,$false,$true,$true,$true,$true,$true))
+ $script:source_read_ms+=$step.Elapsed.TotalMilliseconds
  $hr=[int](SourceArrayFirst $read[4])
  if($hr -lt 0){throw (New-Object Runtime.InteropServices.COMException -ArgumentList @('SyncRead item failed',$hr))}
  $value=SourceArrayFirst $read[3]
@@ -110,7 +121,13 @@ function ComGroupRead($group,$items,[string]$itemId,[int]$clientHandle){
 }
 function ReadItems($request){
  $server=$null;$group=$null;$connected=$false;$samples=@()
+ $script:source_add_ms=[double]0;$script:source_read_ms=[double]0
+ $script:source_init_ms=[double]0
+ $initializing=[Diagnostics.Stopwatch]::StartNew()
  try{
+  if($script:keep_source_session -and $script:source_session){
+   $server=$script:source_session['server'];$group=$script:source_session['group'];$groups=$script:source_session['groups'];$items=$script:source_session['items'];$connected=$true
+  }else{
   Log 'COM_AUTOMATION_CREATE'
   $server=New-Object -ComObject 'OPC.Automation.1'
   Log 'COM_AUTOMATION_CREATED'
@@ -121,11 +138,15 @@ function ReadItems($request){
   Log ('COM_GROUP_COLLECTION null='+($null -eq $groups))
   $group=ComCall $groups 'Add' @('OpcBridgeReadOnly_'+[Guid]::NewGuid().ToString('N'))
   Log 'COM_GROUP_CREATED'
-  $items=ComGet $group 'OPCItems';$index=0
+  $items=ComGet $group 'OPCItems'
+  if($script:keep_source_session){$script:source_session=@{server=$server;group=$group;groups=$groups;items=$items;handles=@{}}}
+  $script:source_init_ms=$initializing.Elapsed.TotalMilliseconds
+  }
+  $index=0
   foreach($entry in $request['items']){
    $index++;$item=$null
    $targetType=[string]$entry['data_type'];$sourceType=[string]$entry['source_data_type'];if(!$sourceType){$sourceType=$targetType};$conversion=$entry['source_conversion'];if([string]::IsNullOrEmpty([string]$conversion)){$conversion=$null}
-   $s=@{item_id=$entry['item_id'];source_item_id=$entry['source_item_id'];data_type=$targetType;source_data_type=$sourceType;source_conversion=$conversion;value=$null;quality=0;source_timestamp_filetime=$null;hresult=0;source_vartype=$null;published_vartype=$(if($targetType -eq 'Boolean'){11}else{5});timestamp_interpretation=('Unspecified OLE date policy: '+$script:timestamp_policy);timestamp_policy=$script:timestamp_policy}
+   $s=@{item_id=$entry['item_id'];source_item_id=$entry['source_item_id'];data_type=$targetType;source_data_type=$sourceType;source_conversion=$conversion;value=$null;quality=0;source_timestamp_filetime=$null;hresult=0;source_vartype=$null;published_vartype=(BridgePublishedVariantType $targetType);timestamp_interpretation=('Unspecified OLE date policy: '+$script:timestamp_policy);timestamp_policy=$script:timestamp_policy}
    try{
     Log ('COM_GROUP_ITEM_READ index='+$index)
     $out=ComGroupRead $group $items ([string]$entry['source_item_id']) $index;$value=$out[1]
@@ -138,13 +159,23 @@ function ReadItems($request){
     $s['canonical_vartype']=$null
 
     if($out[3] -is [DateTime]){$s['source_timestamp_text']=$out[3].ToString('o');$s['source_timestamp_kind']=$out[3].Kind.ToString()}
+    $s['source_timestamp_filetime']=Timestamp $out[3]
+    $s['source_quality']=([int]$out[2] -band 65535)
     $sourceMatches=($sourceType -eq 'Boolean' -and $value -is [bool] -and $observedVartype -eq 11) -or ($sourceType -eq 'Double' -and $value -is [double] -and $observedVartype -eq 5 -and ![double]::IsNaN($value) -and ![double]::IsInfinity($value)) -or ($sourceType -eq 'Float' -and $value -is [single] -and $observedVartype -eq 4 -and ![single]::IsNaN($value) -and ![single]::IsInfinity($value))
     $conversionAllowed=(!$conversion -and $sourceType -eq $targetType) -or ($conversion -eq 'float_to_double' -and $sourceType -eq 'Float' -and $targetType -eq 'Double')
+    if($conversion -eq 'automatic' -and $sourceType -eq 'Auto'){
+     try{$publishedValue=ConvertBridgeScalar $value $targetType;$sourceMatches=$true;$conversionAllowed=$true}
+     catch{$sourceMatches=$false;$s['conversion_error']=$_.Exception.Message}
+    }elseif(!$conversion -and $sourceType -eq $targetType -and ($targetType -eq 'Integer' -or $targetType -eq 'String')){
+     $sourceMatches=($observedVartype -eq (BridgePublishedVariantType $targetType))
+     if($sourceMatches){try{$publishedValue=ConvertBridgeScalar $value $targetType}catch{$sourceMatches=$false}}
+    }
     if($s['canonical_vartype'] -ne $null -and $s['canonical_vartype'] -ne $observedVartype){$sourceMatches=$false}
     if(!$sourceMatches -or !$conversionAllowed){$s['hresult']=-1073479676;$s['quality']=0}else{
-     $publishedValue=$value
+     if($conversion -ne 'automatic'){$publishedValue=$value}
      if($conversion -eq 'float_to_double'){$publishedValue=[double]$value;$s['type_evidence']='COM_VARIANT_VT_R4_explicitly_converted_to_VT_R8'}
-     $s['value']=$publishedValue;$s['quality']=([int]$out[2] -band 65535);$s['source_timestamp_filetime']=Timestamp $out[3]
+     $s['value']=$publishedValue;$s['quality']=([int]$out[2] -band 65535)
+     if($conversion -eq 'automatic'){$s['type_evidence']='returned_VARIANT_CLR_type_automatically_converted'}
      if(!$s['source_timestamp_filetime'] -and ($s['quality'] -band 192) -eq 192){$s['quality']=64}
     }
    }catch{$s['hresult']=ErrorCode $_.Exception;$s['quality']=0;$s['diagnostic_stage']=$script:com_phase;$s['diagnostic_error_id']=($_.FullyQualifiedErrorId -split ',')[0];$s['exception_type']=$_.Exception.GetType().FullName;Log ('COM_ITEM_ERROR index='+$index+' hresult='+$s['hresult']+' phase='+$script:com_phase)
@@ -164,11 +195,20 @@ function ReadItems($request){
   }
  }catch{$script:failure_phase=$script:com_phase;throw}
  finally{
-  if($connected){try{(ComCall $server 'Disconnect' @())|Out-Null}catch{}}
-  if($group){[Runtime.InteropServices.Marshal]::ReleaseComObject($group)|Out-Null}
-  if($server){[Runtime.InteropServices.Marshal]::ReleaseComObject($server)|Out-Null}
+  if(!$script:keep_source_session -or !$script:source_session){
+   if($connected){try{(ComCall $server 'Disconnect' @())|Out-Null}catch{}}
+   if($group){[Runtime.InteropServices.Marshal]::ReleaseComObject($group)|Out-Null}
+   if($server){[Runtime.InteropServices.Marshal]::ReleaseComObject($server)|Out-Null}
+  }
  }
  return $samples
+}
+function ClosePersistentSource {
+ if($script:source_session){
+  try{(ComCall $script:source_session['server'] 'Disconnect' @())|Out-Null}catch{}
+  foreach($name in @('items','group','groups','server')){try{[Runtime.InteropServices.Marshal]::ReleaseComObject($script:source_session[$name])|Out-Null}catch{}}
+  $script:source_session=$null
+ }
 }
 function StopRustDaSourceLabServers([string]$executable){
  $full=[IO.Path]::GetFullPath($executable)
@@ -203,12 +243,15 @@ function StopRustDaSourceLabServers([string]$executable){
 }
 function ReadRustDaFixture($request,$binding){
  $fixture=$binding['rust_da_com_fixture']
- if(!$fixture -or $fixture['enabled'] -ne $true -or [string]$request['prog_id'] -ne 'RustDaBridge.SourceLab.1' -or [string]$request['clsid'] -ne [string]$fixture['clsid']){throw 'source_fixture_not_authorized'}
+ if(!$fixture -or $fixture['enabled'] -ne $true -or [string]$request['prog_id'] -ne [string]$fixture['prog_id'] -or [string]$request['clsid'] -ne [string]$fixture['clsid']){throw 'source_fixture_not_authorized'}
+ $fixtureItems=@($fixture['items'])
+ if($fixtureItems.Count -ne 2 -or [string]$fixtureItems[0]['data_type'] -ne 'Double' -or [string]$fixtureItems[1]['data_type'] -ne 'Boolean' -or [string]$fixtureItems[0]['source_item_id'] -eq [string]$fixtureItems[1]['source_item_id']){throw 'source_fixture_catalog_mismatch'}
  $exe=[string]$fixture['executable'];if(!(Test-Path -LiteralPath $exe)){throw 'source_fixture_unavailable'}
  $hash=[BitConverter]::ToString(([Security.Cryptography.SHA256]::Create()).ComputeHash([IO.File]::ReadAllBytes($exe))).Replace('-','').ToLowerInvariant()
  if($hash -ne ([string]$fixture['sha256']).ToLowerInvariant()){throw 'source_fixture_hash_mismatch'}
- if(@($request['items']).Count -ne 2){throw 'invalid_item_count'}
- $expected=@{'RustLab.Numeric.Double'='Double';'RustLab.Boolean'='Boolean'}
+ if(@($request['items']).Count -ne $fixtureItems.Count){throw 'invalid_item_count'}
+ $expected=@{}
+ foreach($configured in $fixtureItems){$expected[[string]$configured['source_item_id']]=[string]$configured['data_type']}
  foreach($entry in $request['items']){if(!$expected.ContainsKey([string]$entry['source_item_id']) -or $expected[[string]$entry['source_item_id']] -ne [string]$entry['data_type']){throw 'invalid_item_id'}}
  $psi=New-Object Diagnostics.ProcessStartInfo;$psi.FileName=$exe;$psi.Arguments='--source-lab-client-test';$psi.WorkingDirectory=(Split-Path -Parent $exe);$psi.UseShellExecute=$false;$psi.CreateNoWindow=$true;$psi.RedirectStandardOutput=$true;$psi.RedirectStandardError=$true
  $process=[Diagnostics.Process]::Start($psi)
@@ -224,7 +267,7 @@ function ReadRustDaFixture($request,$binding){
   $match=[regex]::Match($line,'^SOURCE_SAMPLE index=(?<index>[01]) variant=(?<variant>F64\([^)]*\)|Bool\((true|false)\)) quality=(?<quality>0x[0-9a-fA-F]+) timestamp_filetime=(?<ticks>\d+) read_hresult=S_OK method=IOPCSyncIO::Read$')
   if(!$match.Success){continue}
   $index=[int]$match.Groups['index'].Value;$ticks=[long]$match.Groups['ticks'].Value;$quality=[Convert]::ToInt32($match.Groups['quality'].Value.Substring(2),16)
-  if($index -eq 0){$sourceId='RustLab.Numeric.Double';$vartype=5;$valueText=$match.Groups['variant'].Value.Substring(4).TrimEnd(')');$value=[double]::Parse($valueText,[Globalization.CultureInfo]::InvariantCulture);$dataType='Double'}else{$sourceId='RustLab.Boolean';$vartype=11;$value=($match.Groups['variant'].Value -eq 'Bool(true)');$dataType='Boolean'}
+  if($index -eq 0){$sourceId=[string]$fixtureItems[0]['source_item_id'];$vartype=5;$valueText=$match.Groups['variant'].Value.Substring(4).TrimEnd(')');$value=[double]::Parse($valueText,[Globalization.CultureInfo]::InvariantCulture);$dataType='Double'}else{$sourceId=[string]$fixtureItems[1]['source_item_id'];$vartype=11;$value=($match.Groups['variant'].Value -eq 'Bool(true)');$dataType='Boolean'}
   $entry=@($request['items']|Where-Object {$_['source_item_id'] -eq $sourceId})
   if($entry.Count -ne 1){throw 'source_fixture_catalog_mismatch'}
   $date=[DateTime]::FromFileTimeUtc($ticks)
@@ -233,6 +276,7 @@ function ReadRustDaFixture($request,$binding){
  if($samples.Count -ne 2){throw 'source_fixture_read_failed'}
  return $samples
 }
+if($LibraryOnly){return}
 try{
  if($RequestBase64.Length -gt 65536){throw 'request_too_large'}
  $request=$json.DeserializeObject([Text.Encoding]::UTF8.GetString([Convert]::FromBase64String($RequestBase64)))
@@ -258,7 +302,7 @@ try{
  if(@($request['items']).Count -lt 1 -or @($request['items']).Count -gt 128){throw 'invalid_item_count'}
  foreach($entry in $request['items']){if(!($entry['source_item_id'] -is [string]) -or !$entry['source_item_id'] -or $entry['source_item_id'].Length -gt 1024){throw 'invalid_item_id'}}
  $lab=$binding['lab_snapshot']
- if($request['prog_id'] -eq 'RustDaBridge.Lab.1'){
+ if($lab -and $request['prog_id'] -eq [string]$lab['prog_id']){
   if(!$lab -or $lab['enabled'] -ne $true -or [string]$lab['clsid'] -ne [string]$request['clsid']){throw 'lab_snapshot_disabled'}
   . (Join-Path $root 'lab_snapshot_transport.ps1')
   Log ('LAB_SNAPSHOT_BEGIN port='+[int]$lab['port'])
@@ -283,7 +327,7 @@ try{
   exit 0
  }
  $samples=@(ReadItems $request);Log ('READ progid='+$request['prog_id']+' items='+$samples.Count)
- Output @{ok=$true;agent_revision='group-sync-v4-explicit-float-double';identity=$identity;transport='opc_da_automation';samples=$samples};exit 0
+ Output @{ok=$true;agent_revision='group-sync-v5-four-scalar-types';identity=$identity;transport='opc_da_automation';samples=$samples};exit 0
 }catch{
  $code=$_.Exception.Message
  if($code -notmatch '^(request_too_large|identity_mismatch|operation_not_allowed|progid_not_authorized|progid_not_registered|clsid_mismatch|invalid_item_count|invalid_item_id|invalid_timestamp_policy|com_timeout|worker_failed|lab_snapshot_disabled|lab_snapshot_unavailable|lab_snapshot_identity_mismatch|lab_snapshot_item_invalid|lab_snapshot_config_invalid|source_fixture_not_authorized|source_fixture_unavailable|source_fixture_hash_mismatch|source_fixture_catalog_mismatch|source_fixture_read_failed|source_fixture_cleanup_failed|source_fixture_cleanup_marker_present)$'){$code='source_error'}

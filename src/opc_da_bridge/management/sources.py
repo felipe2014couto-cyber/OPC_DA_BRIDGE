@@ -741,7 +741,7 @@ class Sources:
         try:
             config = json.loads((self.store.directory / "relay-read-windows.json").read_text())
             entry = config["windows"][module["id"]]
-            limit = entry.get("interval_s", 10)
+            limit = entry.get("interval_s", 1)
             if (entry["machine_id"] == machine_id and entry.get("mode") == "continuous"
                     and type(limit) is int and 1 <= limit <= 3600):
                 return max(interval, limit)
@@ -767,7 +767,7 @@ class Sources:
                 raise ValueError()
             mode = entry.get("mode", "bounded")
             if mode == "continuous":
-                interval = entry.get("interval_s", 10)
+                interval = entry.get("interval_s", 1)
                 if (type(entry.get("enabled")) is not bool or type(interval) is not int
                         or not 1 <= interval <= 3600):
                     raise ValueError()
@@ -839,7 +839,7 @@ class Sources:
             if not error:
                 # Agent-local monotonic durations; never subtract host clocks.
                 for key, value in reply.get("source_timing_ms", {}).items():
-                    if key in ("worker_initialization", "com_initialization", "add_items", "opc_read", "read_and_conversion") and type(value) in (int, float) and math.isfinite(value) and value >= 0:
+                    if key in ("worker_initialization", "com_initialization", "add_items", "opc_read", "read_and_conversion") and type(value) in (int,float) and math.isfinite(value) and value >= 0:
                         timings["source_agent_" + key] = round(value, 3)
             if self.stop.is_set(): return
             if not self._read_window(mid, module["id"])[0]:

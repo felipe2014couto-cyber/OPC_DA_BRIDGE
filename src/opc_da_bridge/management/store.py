@@ -198,9 +198,9 @@ class Store:
                         raise ManagementError("ProgID inválido.")
                     if not re.fullmatch(r"\{[0-9A-Fa-f-]{36}\}", result["source_clsid"]):
                         raise ManagementError("CLSID inválido.")
-                    interval = data.get("update_interval_s", 10)
-                    if isinstance(interval, bool) or not isinstance(interval, int) or not 5 <= interval <= 3600:
-                        raise ManagementError("Intervalo de leitura deve ser inteiro entre 5 e 3600 segundos.")
+                    interval = data.get("update_interval_s", 1)
+                    if isinstance(interval, bool) or not isinstance(interval, int) or not 1 <= interval <= 3600:
+                        raise ManagementError("Intervalo de leitura deve ser inteiro entre 1 e 3600 segundos.")
                     result["update_interval_s"] = interval
         elif kind == "variables":
             data_type = data.get("data_type")

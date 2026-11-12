@@ -20,6 +20,16 @@ SNAPSHOT_ITEMS = {"Example.Numeric": "Double", "Example.Boolean": "Boolean"}
 CLSID = "{22222222-3333-4444-5555-666666666666}"
 
 
+def test_persistent_source_preserves_hresult_and_rejects_snapshot_transport(tmp_path, monkeypatch):
+    channel=SshSourceChannel(tmp_path)
+    target={"read_session_transport":"ssh_stream_v1","read_transport":"opc_da_automation"}
+    monkeypatch.setattr(channel,'stream_request',lambda *a,**k:{'ok':False,'hresult':-2147024891})
+    with pytest.raises(SourceError) as e: channel.request(target,{'operation':'read'})
+    assert e.value.hresult == -2147024891
+    target['read_transport']='rust_lab_loopback_snapshot'
+    with pytest.raises(AgentError,match='OPC Automation'):channel.request(target,{'operation':'read'})
+
+
 @pytest.mark.parametrize("reply,expected", [
     ({"ok": False, "error_code": "source_error", "diagnostic_stage": "get_OPCGroups", "hresult": -2147024891},
      "etapa get_OPCGroups; HRESULT 0x80070005"),
@@ -703,7 +713,7 @@ def test_concurrent_discoveries_and_invalid_settings_preserve_store(lab):
     assert len({r["discovery_id"] for r in records}) == 8
     assert len(json.loads(sources.path.read_text())) == 8
     mid, md, _ = configure(lab); before = store.state(False)
-    with pytest.raises(ManagementError): store.mutate("update", "modules", {"update_interval_s": 1}, store.revision(), md)
+    with pytest.raises(ManagementError): store.mutate("update", "modules", {"update_interval_s": 0}, store.revision(), md)
     assert store.state(False) == before
 
 
@@ -825,7 +835,7 @@ def test_continuous_collection_can_stop_without_changing_catalog(lab, monkeypatc
         sources.poll_once(machine, module, state)
         assert sources.status(mid)['status'] == 'connected'
     assert sources.status(mid)['origins'][0]['source_environment'] == 'real_read_only'
-    assert sources._collection_interval(mid, dict(module, update_interval_s=5)) == 10
+    assert sources._collection_interval(mid, dict(module, update_interval_s=5)) == 5
     assert sources._collection_interval(mid, dict(module, update_interval_s=20)) == 20
     assert sources._collection_interval('another-machine', dict(module, update_interval_s=5)) == 5
     requests, deliveries = len(channel.requests), len(dest.sent)

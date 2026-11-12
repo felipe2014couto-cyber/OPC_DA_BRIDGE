@@ -193,8 +193,8 @@ def test_persistent_lab_snapshot_api_is_simulated_and_fails_closed(app):
         "agent_dir": SNAPSHOT_AGENT_DIR,
         "lab_snapshot": {"enabled": True, "prog_id": SNAPSHOT_PROGID,
             "clsid": SNAPSHOT_CLSID, "port": 49321,
-            "items": [{"source_item_id": number["source_id"], "data_type": "Double"},
-                      {"source_item_id": boolean["source_id"], "data_type": "Boolean"}]}}}}))
+                "items": [{"source_item_id": number["source_id"], "data_type": "Double"},
+                          {"source_item_id": boolean["source_id"], "data_type": "Boolean"}]}}}}))
 
     class FakeSnapshot:
         fail = False
@@ -204,6 +204,8 @@ def test_persistent_lab_snapshot_api_is_simulated_and_fails_closed(app):
                 "transport": "rust_lab_loopback_snapshot", "read_method": "GET /v1/snapshot over SSH-local loopback",
                 "source_pid": 2345, "source_session": 1,
                 "samples": [{**item, "value": False if item["data_type"] == "Boolean" else 7.0,
+                    # 2020-01-01 UTC; FILETIME epoch (1601) is rejected as an
+                    # invalid source timestamp and correctly degrades quality.
                     "quality": 192, "source_timestamp_filetime": 132223104000000000,
                     "source_vartype": 11 if item["data_type"] == "Boolean" else 5} for item in request["items"]]}
 
@@ -214,7 +216,7 @@ def test_persistent_lab_snapshot_api_is_simulated_and_fails_closed(app):
     status, response, _ = client.call("GET", "/api/v1/samples?ids=" + number["id"] + "," + boolean["id"])
     assert status == 200 and response["simulated"] is True and response["applied_to_windows"] is False
     n, b = response["samples"]
-    assert n["value"] == 7.0 and n["data_type"] == "Double" and n["source_vartype"] == 5
+    assert n["value"] == 7.0 and n["data_type"] == "Double" and n["source_vartype"] == 5, response["lab_snapshot"]
     assert b["value"] is False and b["data_type"] == "Boolean" and b["source_vartype"] == 11
     assert all(s["quality_code"] == 192 and s["source_timestamp"] == "2020-01-01T00:00:00.000000Z" for s in (n, b))
     assert all(s["lab_snapshot"] and "hresult" not in s for s in (n, b))
